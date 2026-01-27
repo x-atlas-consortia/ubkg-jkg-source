@@ -4,7 +4,7 @@ The Directory with this Readme contains all artifacts necessary except for the N
 
 Here's what was done:
 
-1. Run UMLS Extract notebook - recommend one cell at a time to get familiar and consider what should be fully automated versus parameterized versus as notebook and how to use various parts for other JKG creations - an hour?
+1. Run UMLS Extract notebook (**UMLS-JKG.ipynb**) - recommend one cell at a time to get familiar and consider what should be fully automated versus parameterized versus as notebook and how to use various parts for other JKG creations - an hour?
 
 2. Run validation notebook with UMLS-JKG.json re-named JKG.json (and use JKG_Schema.json) - recommend one cell at a time to get familiar and consider what should be fully automated versus parameterized versus a notebook - timing seems to vary depending upon machine resources - an hour?
 
