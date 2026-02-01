@@ -2,3 +2,4 @@
 python-json-logger==4.0.0
 
 polars==1.37.1
+tqdm==4.67.2
