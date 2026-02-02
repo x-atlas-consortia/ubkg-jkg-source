@@ -31,6 +31,31 @@ from utilities.ubkg_logging import ubkgLogging
 # Function to find the repo root
 from utilities.find_repo_root import find_repo_root
 
+def get_cols_for_file(cfg:ubkgConfigParser, ulog:ubkgLogging, filename:str) -> list:
+    """
+    Obtains the list of column headers for a UMLS file from MRCOLS.RRF.
+    :param cfg: UbkgConfigParser instance
+    :param ulog: UbkgLogging instance
+    :param filename: UMLS filename
+    :return:
+    """
+    ufile = os.path.join(cfg.get_value(section='directories', key='umls_dir'), 'META', 'MRCOLS.RRF')
+
+    # Chicken/egg: it is necessary to provide the list of columns for
+    # MRCOLS.RRF in order to filter on columns from MRCOLS.RRF for
+    # another file. However, it is only necessary for the MRCOLS.RRF--
+    # all other file column lists come from that file.
+    listcol = ['COL','DES','REF','MIN','AV','MAX','FIL','DTY']
+
+    try:
+        return (pl.read_csv(ufile, separator='|',new_columns=listcol)
+                .filter(pl.col('FIL') == filename + '.RRF')
+                .get_column('COL')).to_list()
+
+    except FileNotFoundError:
+        ulog.print_and_logger_info(f'MRCONSO.RRF not found')
+        exit(1)
+
 def get_umls_file(cfg:ubkgConfigParser, ulog:ubkgLogging, filename:str, suppress:bool = True,
                           english:bool = True, n_rows=None, cols=None) -> pl.DataFrame:
     """
@@ -46,15 +71,21 @@ def get_umls_file(cfg:ubkgConfigParser, ulog:ubkgLogging, filename:str, suppress
     :return: DataFrame
     """
     ufile = os.path.join(cfg.get_value(section='directories', key='umls_dir'),'META', filename+'.RRF')
-    ulog.print_and_logger_info(f'Reading file {ufile}...')
+    if n_rows is not None:
+        rownum = str(n_rows)
+    else:
+        rownum = 'all'
+    ulog.print_and_logger_info(f'Reading {rownum} rows from {ufile}...')
 
-    # Obtain the column header names from configuration.
-    listcol = cfg.get_value(section='columns', key=filename).split(',')
+    # Obtain the column header names.
+    listcol = get_cols_for_file(cfg=cfg, ulog=ulog, filename=filename)
 
     checksuppress = suppress and 'SUPPRESS' in listcol
+    ulog.print_and_logger_info(f'Returning only non-suppressed values: {checksuppress}')
     checkenglish = english and 'LAT' in listcol
+    ulog.print_and_logger_info(f'Returning only English-language sources: {checkenglish}')
 
-    # Use lazy read (scan_csv) if possible.
+    # Use lazy read (scan_csv) to optimize filtering.
     try:
         if checksuppress and checkenglish:
             df = (pl.scan_csv(ufile, separator='|', new_columns=listcol, n_rows=n_rows)
@@ -78,6 +109,7 @@ def get_umls_file(cfg:ubkgConfigParser, ulog:ubkgLogging, filename:str, suppress
             df = df.collect()  # Materialize the LazyFrame into memory
             pbar.update(1)
 
+
         if cols is not None:
             df = df.select(cols)
 
@@ -86,6 +118,22 @@ def get_umls_file(cfg:ubkgConfigParser, ulog:ubkgLogging, filename:str, suppress
     except FileNotFoundError:
         ulog.print_and_logger_info(f'File {ufile} not found')
         exit(1)
+
+def get_concept_code_rels(cfg:ubkgConfigParser, ulog:ubkgLogging) -> pl.DataFrame:
+    """
+    Builds a DataFrame of information on the relationships
+    between UMLS concepts (CUIs) and codes from UMLS vocabularies.
+    :param cfg: UbkgConfigParser instance
+    :param ulog: UbkgLogging instance
+    :return: DataFrame
+    """
+
+    ulog.print_and_logger_info(f'Building frame of concept-code relationships...')
+    ulog.print_and_logger_info(f'--Obtaining non-suppressed, English-language concepts...')
+    # Obtain non-suppressed relationships.
+    colconso = ['STR','SAB','CODE','TTY','CUI','AUI']
+    df_mrconso = get_umls_file(cfg=cfg, ulog=ulog, filename='MRCONSO', cols=colconso)
+
 
 def get_concept_concept_rels(cfg:ubkgConfigParser, ulog:ubkgLogging) -> pl.DataFrame:
     """
@@ -183,10 +231,11 @@ def get_concept_concept_rels(cfg:ubkgConfigParser, ulog:ubkgLogging) -> pl.DataF
 
     return df_rel
 
+
 def main():
 
     # SETUP
-    # Absolute path to the root of the repo.
+    # Absolute path to the root of the repo
     repo_root = find_repo_root()
 
     # Centralized logging
@@ -213,8 +262,8 @@ def main():
     # Preliminary: Build concept-concept relationship DataFrame.
     df_concept_concept_rels = get_concept_concept_rels(cfg=cfg, ulog=ulog)
 
-    # Preliminary: Build concept-code relationship DataFrame,
-    # querying MRCONSO and MRDEF.
+    # Preliminary: Build concept-code relationship DataFrame.
+    #df_concept_code_rels = get_concept_code_rels(cfg=cfg, ulog=ulog)
 
     # Build sources array from MRSAB:
     # 1. Read configuration file to obtain source information for UMLS.
