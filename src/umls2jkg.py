@@ -21,6 +21,9 @@ MRSAT.RRF
 """
 
 import os
+import time
+from datetime import timedelta
+
 import polars as pl
 from tqdm import tqdm
 
@@ -30,11 +33,13 @@ from utilities.ubkg_config import ubkgConfigParser
 from utilities.ubkg_logging import ubkgLogging
 # Function to find the repo root
 from utilities.find_repo_root import find_repo_root
+from utilities.ubkg_standardize import create_codeid, standardize_codeid, standardize_term
 
 def get_umls_file(cfg:ubkgConfigParser, ulog:ubkgLogging, filename:str, suppress:bool = True,
-                          english:bool = True, n_rows=None, cols=None) -> pl.DataFrame:
+                          english:bool = True, n_rows=None, cols=None, clean_file:bool=False) -> pl.DataFrame:
     """
-    Returns a DataFrame corresponding to the optionally filtered content of a UMLS file
+    Returns a DataFrame corresponding to the optionally filtered content of a UMLS file.
+    Uses lazy loading (pl.scan_csv and collect).
 
     :param suppress: if True and the file has a SUPPRESS column, suppress
     :param english: if True the file has a LAT column, filter to English
@@ -43,6 +48,7 @@ def get_umls_file(cfg:ubkgConfigParser, ulog:ubkgLogging, filename:str, suppress
     :param filename: UMLS filename
     :param n_rows: number of rows to read
     :param cols: columns to return
+    :param clean_file: if True the file will be pre-processed.
     :return: DataFrame
     """
     ufile = os.path.join(cfg.get_value(section='directories', key='umls_dir'),'META', filename+'.RRF')
@@ -50,21 +56,40 @@ def get_umls_file(cfg:ubkgConfigParser, ulog:ubkgLogging, filename:str, suppress
         rownum = str(n_rows)
     else:
         rownum = 'all'
-    ulog.print_and_logger_info(f'Reading {rownum} rows from {ufile}...')
+    ulog.print_and_logger_info(f'----Reading {rownum} rows from {ufile}...')
 
     # Obtain the column header names from configuration.
     listcol = cfg.get_value(section='columns', key=filename).split(',')
 
     checksuppress = suppress and 'SUPPRESS' in listcol
-    ulog.print_and_logger_info(f'Returning only non-suppressed values: {checksuppress}')
+    ulog.print_and_logger_info(f'----Returning only non-suppressed values: {checksuppress}')
     checkenglish = english and 'LAT' in listcol
-    ulog.print_and_logger_info(f'Returning only English-language sources: {checkenglish}')
+    ulog.print_and_logger_info(f'----Returning only English-language sources: {checkenglish}')
+
+    if clean_file:
+        ulog.print_and_logger_info(f'----Pre-processing file: {ufile}...')
+        cleanfile = os.path.join(cfg.get_value(section='directories', key='output_dir'), filename + '.RRF')
+        # Get the total number of lines in the input file
+        with open(ufile, "r", encoding="utf-8") as infile:
+            total_lines = sum(1 for _ in infile)
+
+        # Process the file with tqdm progress bar.
+        with open(ufile, "r", encoding="utf-8") as infile, open(cleanfile, "w", encoding="utf-8") as outfile:
+            with tqdm(total=total_lines, desc="Cleaning") as pbar:
+                for line in infile:
+                    # Replace improperly escaped quotes.
+                    fixed_line = line.replace('"', '')
+                    outfile.write(fixed_line)
+                    pbar.update(1)  # Update the progress bar for each processed line
+        ufile = cleanfile
 
     # Lazy loading and filtering.
     try:
-        ldf = (pl.scan_csv(ufile, separator='|', new_columns=listcol, n_rows=n_rows)
-              #.with_columns(pl.col("SUPPRESS").cast(str))
-              .unique())
+        ldf = (pl.scan_csv(ufile,
+                           separator='|',
+                           new_columns=listcol,
+                           n_rows=n_rows)
+               .unique())
         if checksuppress:
             ldf = (ldf.filter(pl.col('SUPPRESS') != 'O'))
         if checkenglish:
@@ -101,14 +126,47 @@ def get_concept_code_rels(cfg:ubkgConfigParser, ulog:ubkgLogging) -> pl.DataFram
     :return: DataFrame
     """
 
-    ulog.print_and_logger_info(f'Building frame of concept-code relationships...')
-    ulog.print_and_logger_info(f'--Obtaining non-suppressed, English-language concepts...')
+    ulog.print_and_logger_info('Building frame of concept-code relationships...')
+    ulog.print_and_logger_info('--Obtaining non-suppressed, English-language concepts...')
     # Obtain non-suppressed, English-only relationships.
-    colconso = ['STR','SAB','CODE','TTY','CUI','AUI']
-    df_mrconso = get_umls_file(cfg=cfg, ulog=ulog, filename='MRCONSO', cols=colconso, n_rows=100)
-    print(df_mrconso)
-    exit(1)
+    # MRCONSO.RRF contains fields that include double quotes.
+    # Polars considers these as incorrectly escaped fields.
+    # It is necessary to pre-process the file before reading it.
+    col_conso = ['STR','SAB','CODE','TTY','CUI','AUI']
+    df_mrconso = get_umls_file(cfg=cfg, ulog=ulog, filename='MRCONSO', cols=col_conso, n_rows=100, clean_file=True)
 
+    ulog.print_and_logger_info('--Obtaining concept definitions...')
+    # Obtain non-suppressed definitions.
+    col_def = ['AUI','DEF']
+    # MRDEF.RRF also contains fields that include double quotes, so pre-process.
+    df_mrdef = get_umls_file(cfg=cfg, ulog=ulog, filename='MRDEF', cols=col_def, clean_file=True)
+
+    # Join MRDEF data to MRCONSO data.
+    df = df_mrconso.join(
+        df_mrdef,
+        how='left',
+        on='AUI',
+        maintain_order='left'
+    )
+
+    ulog.print_and_logger_info('--Standardizing codeids...')
+    # Create standardized codeid.
+    # Apply the transformations in steps.
+    # Step 1: Create `codeid` column
+    df = df.with_columns(
+        create_codeid(SAB_col=pl.col('SAB'), CODE_col=pl.col('CODE'), codeid_col='codeid')
+    )
+    # Step 2: Standardize codeid from Step 1 to remove embedded SABs and special characters.
+    df = df.with_columns(
+        standardize_codeid(codeid_col='codeid')
+    )
+
+    # Add a column to terms that resemble CURIEs.
+    df = df.with_columns(
+        standardize_term(term_col='STR')
+    )
+
+    return df
 
 def get_concept_concept_rels(cfg:ubkgConfigParser, ulog:ubkgLogging) -> pl.DataFrame:
     """
@@ -206,10 +264,25 @@ def get_concept_concept_rels(cfg:ubkgConfigParser, ulog:ubkgLogging) -> pl.DataF
 
     return df_rel
 
+def get_sources_list(cfg:ubkgConfigParser, ulog:ubkgLogging) -> list:
+    """
+    Builds the sources array of the JKG.JSON.
+    :param cfg: UbkgConfigParser instance
+    :param ulog: UbkgLogging instance
+    :return:
+    """
+
+    ulog.print_and_logger_info(f'Building sources list...')
+    listsources = []
+    return listsources
 
 def main():
 
+    start_time = time.time()
+
+    #--------
     # SETUP
+
     # Absolute path to the root of the repo
     repo_root = find_repo_root()
 
@@ -232,15 +305,22 @@ def main():
     # Make output directory if it does not yet exist.
     os.system(f"mkdir -p {output_dir}")
 
-    # BUILD JSON FILE
+    #--------
+    # PRELIMINARY DATAFRAMES
 
-    # Preliminary: Build concept-concept relationship DataFrame.
-    #df_concept_concept_rels = get_concept_concept_rels(cfg=cfg, ulog=ulog)
+    # Build concept-concept relationship DataFrame.
+    # This will be used to build elements in both the nodes and
+    # the rels arrays.
+    df_concept_concept_rels = get_concept_concept_rels(cfg=cfg, ulog=ulog)
 
-    # Preliminary: Build concept-code relationship DataFrame.
+    # Build concept-code relationship DataFrame.
+    # This will be used to build elements in both the nodes and
+    # the rels arrays.
     df_concept_code_rels = get_concept_code_rels(cfg=cfg, ulog=ulog)
 
     # Build sources array from MRSAB:
+    list_sources = get_sources_list(cfg=cfg, ulog=ulog)
+
     # 1. Read configuration file to obtain source information for UMLS.
     # 2. Add UMLS SAB to sources array.
 
@@ -256,6 +336,10 @@ def main():
     # 2. Concept-concept relationships
     # 3. Concept-code relationships
     # 4. Add maps of NDC codes to CUIs to rels
+
+
+    elapsed_time = time.time() - start_time
+    ulog.print_and_logger_info(f'Completed. Total Elapsed time {"{:0>8}".format(str(timedelta(seconds=elapsed_time)))}')
 
 
 if __name__ == "__main__":
