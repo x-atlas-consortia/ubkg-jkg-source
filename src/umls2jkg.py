@@ -31,31 +31,6 @@ from utilities.ubkg_logging import ubkgLogging
 # Function to find the repo root
 from utilities.find_repo_root import find_repo_root
 
-def get_cols_for_file(cfg:ubkgConfigParser, ulog:ubkgLogging, filename:str) -> list:
-    """
-    Obtains the list of column headers for a UMLS file from MRCOLS.RRF.
-    :param cfg: UbkgConfigParser instance
-    :param ulog: UbkgLogging instance
-    :param filename: UMLS filename
-    :return:
-    """
-    ufile = os.path.join(cfg.get_value(section='directories', key='umls_dir'), 'META', 'MRCOLS.RRF')
-
-    # Chicken/egg: it is necessary to provide the list of columns for
-    # MRCOLS.RRF in order to filter on columns from MRCOLS.RRF for
-    # another file. However, it is only necessary for the MRCOLS.RRF--
-    # all other file column lists come from that file.
-    listcol = ['COL','DES','REF','MIN','AV','MAX','FIL','DTY']
-
-    try:
-        return (pl.read_csv(ufile, separator='|',new_columns=listcol)
-                .filter(pl.col('FIL') == filename + '.RRF')
-                .get_column('COL')).to_list()
-
-    except FileNotFoundError:
-        ulog.print_and_logger_info(f'MRCONSO.RRF not found')
-        exit(1)
-
 def get_umls_file(cfg:ubkgConfigParser, ulog:ubkgLogging, filename:str, suppress:bool = True,
                           english:bool = True, n_rows=None, cols=None) -> pl.DataFrame:
     """
@@ -77,38 +52,36 @@ def get_umls_file(cfg:ubkgConfigParser, ulog:ubkgLogging, filename:str, suppress
         rownum = 'all'
     ulog.print_and_logger_info(f'Reading {rownum} rows from {ufile}...')
 
-    # Obtain the column header names.
-    listcol = get_cols_for_file(cfg=cfg, ulog=ulog, filename=filename)
+    # Obtain the column header names from configuration.
+    listcol = cfg.get_value(section='columns', key=filename).split(',')
 
     checksuppress = suppress and 'SUPPRESS' in listcol
     ulog.print_and_logger_info(f'Returning only non-suppressed values: {checksuppress}')
     checkenglish = english and 'LAT' in listcol
     ulog.print_and_logger_info(f'Returning only English-language sources: {checkenglish}')
 
-    # Use lazy read (scan_csv) to optimize filtering.
+    # Lazy loading and filtering.
     try:
-        if checksuppress and checkenglish:
-            df = (pl.scan_csv(ufile, separator='|', new_columns=listcol, n_rows=n_rows)
-                  .filter(pl.col('SUPPRESS') != 'O')
-                  .filter(pl.col('LAT') == 'ENG')
-                  .unique())
-        elif checksuppress:
-            df = (pl.scan_csv(ufile, separator='|', new_columns=listcol, n_rows=n_rows)
-                  .filter(pl.col('SUPPRESS') != 'O')
-                  .unique())
-        elif checkenglish:
-            df = (pl.scan_csv(ufile, separator='|', new_columns=listcol, n_rows=n_rows)
-                  .filter(pl.col('LAT') == 'ENG')
-                  .unique())
+        ldf = (pl.scan_csv(ufile, separator='|', new_columns=listcol, n_rows=n_rows)
+              #.with_columns(pl.col("SUPPRESS").cast(str))
+              .unique())
+        if checksuppress:
+            ldf = (ldf.filter(pl.col('SUPPRESS') != 'O'))
+        if checkenglish:
+            ldf = (ldf.filter(pl.col('LAT') == 'ENG'))
+
+        # Convert LazyFrame to DataFrame with tqdm for progress.
+        # Get file size in bytes.
+        if n_rows is not None:
+            est_total = n_rows
         else:
-            df = (pl.scan_csv(ufile, separator='|', new_columns=listcol, n_rows=n_rows)
-                  .unique())
+            file_size = os.path.getsize(ufile)
+            avg_row_size = 10 * len(listcol)
+            est_total = file_size//avg_row_size
 
-        # Convert LazyFrame to DataFrame with tqdm for progress
-        with tqdm(total=1, desc=f'Processing {filename}.RRF') as pbar:
-            df = df.collect()  # Materialize the LazyFrame into memory
+        with tqdm(total=est_total, desc=f'Processing {filename}.RRF') as pbar:
+            df = ldf.collect()
             pbar.update(1)
-
 
         if cols is not None:
             df = df.select(cols)
@@ -130,9 +103,11 @@ def get_concept_code_rels(cfg:ubkgConfigParser, ulog:ubkgLogging) -> pl.DataFram
 
     ulog.print_and_logger_info(f'Building frame of concept-code relationships...')
     ulog.print_and_logger_info(f'--Obtaining non-suppressed, English-language concepts...')
-    # Obtain non-suppressed relationships.
+    # Obtain non-suppressed, English-only relationships.
     colconso = ['STR','SAB','CODE','TTY','CUI','AUI']
-    df_mrconso = get_umls_file(cfg=cfg, ulog=ulog, filename='MRCONSO', cols=colconso)
+    df_mrconso = get_umls_file(cfg=cfg, ulog=ulog, filename='MRCONSO', cols=colconso, n_rows=100)
+    print(df_mrconso)
+    exit(1)
 
 
 def get_concept_concept_rels(cfg:ubkgConfigParser, ulog:ubkgLogging) -> pl.DataFrame:
@@ -148,7 +123,7 @@ def get_concept_concept_rels(cfg:ubkgConfigParser, ulog:ubkgLogging) -> pl.DataF
     ulog.print_and_logger_info(f'--Obtaining non-suppressed relationships...')
     # Obtain non-suppressed relationships.
     colrels = ['CUI1','CUI2','REL','RELA','SAB']
-    df_mrrel = get_umls_file(cfg=cfg, ulog=ulog, filename='MRREL', cols=colrels)
+    df_mrrel = get_umls_file(cfg=cfg, ulog=ulog, filename='MRREL', cols=colrels,n_rows=100)
 
     # Filter to English-language SABs.
     colsabs = ['RSAB','LAT']
@@ -260,10 +235,10 @@ def main():
     # BUILD JSON FILE
 
     # Preliminary: Build concept-concept relationship DataFrame.
-    df_concept_concept_rels = get_concept_concept_rels(cfg=cfg, ulog=ulog)
+    #df_concept_concept_rels = get_concept_concept_rels(cfg=cfg, ulog=ulog)
 
     # Preliminary: Build concept-code relationship DataFrame.
-    #df_concept_code_rels = get_concept_code_rels(cfg=cfg, ulog=ulog)
+    df_concept_code_rels = get_concept_code_rels(cfg=cfg, ulog=ulog)
 
     # Build sources array from MRSAB:
     # 1. Read configuration file to obtain source information for UMLS.
