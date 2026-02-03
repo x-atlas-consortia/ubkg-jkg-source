@@ -22,9 +22,11 @@ MRSAT.RRF
 
 import os
 import time
+
 from datetime import timedelta
 
 import polars as pl
+import json
 from tqdm import tqdm
 
 # Configuration file class
@@ -36,13 +38,14 @@ from utilities.find_repo_root import find_repo_root
 from utilities.ubkg_standardize import create_codeid, standardize_codeid, standardize_term
 
 def get_umls_file(cfg:ubkgConfigParser, ulog:ubkgLogging, filename:str, suppress:bool = True,
-                          english:bool = True, n_rows=None, cols=None, clean_file:bool=False) -> pl.DataFrame:
+                          english:bool = True, curver:bool=True, n_rows=None, cols=None, clean_file:bool=False) -> pl.DataFrame:
     """
     Returns a DataFrame corresponding to the optionally filtered content of a UMLS file.
     Uses lazy loading (pl.scan_csv and collect).
 
     :param suppress: if True and the file has a SUPPRESS column, suppress
     :param english: if True the file has a LAT column, filter to English
+    :param curver: if True the file has a CURVER column, filter to current version
     :param cfg: UbkgConfigParser instance
     :param ulog: UbkgLogging instance
     :param filename: UMLS filename
@@ -62,9 +65,9 @@ def get_umls_file(cfg:ubkgConfigParser, ulog:ubkgLogging, filename:str, suppress
     listcol = cfg.get_value(section='columns', key=filename).split(',')
 
     checksuppress = suppress and 'SUPPRESS' in listcol
-    ulog.print_and_logger_info(f'----Returning only non-suppressed values: {checksuppress}')
     checkenglish = english and 'LAT' in listcol
-    ulog.print_and_logger_info(f'----Returning only English-language sources: {checkenglish}')
+    checkcurver = curver and 'CURVER' in listcol
+
 
     if clean_file:
         ulog.print_and_logger_info(f'----Pre-processing file: {ufile}...')
@@ -94,6 +97,8 @@ def get_umls_file(cfg:ubkgConfigParser, ulog:ubkgLogging, filename:str, suppress
             ldf = (ldf.filter(pl.col('SUPPRESS') != 'O'))
         if checkenglish:
             ldf = (ldf.filter(pl.col('LAT') == 'ENG'))
+        if checkcurver:
+            ldf = (ldf.filter(pl.col('CURVER') == 'Y'))
 
         # Convert LazyFrame to DataFrame with tqdm for progress.
         # Get file size in bytes.
@@ -273,7 +278,34 @@ def get_sources_list(cfg:ubkgConfigParser, ulog:ubkgLogging) -> list:
     """
 
     ulog.print_and_logger_info(f'Building sources list...')
-    listsources = []
+
+    # Filter to English-language SABs.
+    ulog.print_and_logger_info(f'--Obtaining current English-language SABs...')
+    colsabs = ['VSAB', 'RSAB', 'SON', 'SRL', 'TTYL']
+    df = get_umls_file(cfg=cfg, ulog=ulog, filename='MRSAB', cols=colsabs)
+    df = df.sort('RSAB')
+
+    # Convert to a list of dictionaries for row-wise processing
+    rows = df.to_dicts()
+
+    # Build JSON output row by row.
+    # Start with a hard-coded row for the UMLS itself.
+
+    listsources = [{"labels":["Source"],"properties":{"id":"UMLS:UMLS","name":"Unified Medical Language System","description":"United States National Institutes of Health (NIH) National Library of Medicine (NLM) Unified Medical Language System (UMLS) Knowledge Sources.","sab":"UMLS" ,"source":"http://www.nlm.nih.gov/research/umls/licensedcontent/umlsknowledgesources.html"}}]
+
+    for row in rows:
+        json_str = json.dumps({
+            "labels": ["Source"],
+            "properties": {
+                "id": f"UMLS:{row['VSAB']}",
+                "name": row["SON"],
+                "sab": row["RSAB"],
+                "srl": row["SRL"],
+                "ttyl": row["TTYL"].split(",") if row["TTYL"] else []  # Convert TTYL to a list or an empty list
+            }
+        })
+        listsources.append(json_str)
+
     return listsources
 
 def main():
@@ -311,18 +343,16 @@ def main():
     # Build concept-concept relationship DataFrame.
     # This will be used to build elements in both the nodes and
     # the rels arrays.
-    df_concept_concept_rels = get_concept_concept_rels(cfg=cfg, ulog=ulog)
+    #df_concept_concept_rels = get_concept_concept_rels(cfg=cfg, ulog=ulog)
 
     # Build concept-code relationship DataFrame.
     # This will be used to build elements in both the nodes and
     # the rels arrays.
-    df_concept_code_rels = get_concept_code_rels(cfg=cfg, ulog=ulog)
+    #df_concept_code_rels = get_concept_code_rels(cfg=cfg, ulog=ulog)
 
     # Build sources array from MRSAB:
     list_sources = get_sources_list(cfg=cfg, ulog=ulog)
-
-    # 1. Read configuration file to obtain source information for UMLS.
-    # 2. Add UMLS SAB to sources array.
+    print(list_sources)
 
     # Build nodes array:
     # 1. Obtain Node_Label nodes from Semantic Network (SRDEF).
