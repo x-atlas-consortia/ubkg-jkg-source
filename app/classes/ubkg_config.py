@@ -8,9 +8,9 @@ import configparser
 import os
 
 # Centralized logging
-from .ubkg_logging import ubkgLogging
+from app.classes.ubkg_logging import UbkgLogging
 
-class ubkgConfigParser:
+class UbkgConfigParser:
 
     def __init__(self, path: str, log_dir: str, log_file: str, case_sensitive: bool = False):
         """
@@ -21,7 +21,7 @@ class ubkgConfigParser:
         :param case_sensitive: whether the configuration file should be case-sensitive
         """
 
-        self.ulog = ubkgLogging(log_dir=log_dir, log_file=log_file)
+        self.ulog = UbkgLogging(log_dir=log_dir, log_file=log_file)
 
         self.config = ConfigParser(interpolation=ExtendedInterpolation())
         if case_sensitive:
