@@ -275,7 +275,7 @@ def main():
     ulog.print_and_logger_info('-' * 50)
 
     # Configuration file object
-    cfg_path = os.path.join(repo_root,'app/instance/umls2jkg.ini')
+    cfg_path = os.path.join(repo_root,'app/umls2jkg.ini')
     cfg = UbkgConfigParser(path=cfg_path,log_dir=log_dir, log_file=log_file)
 
     # UMLS reader object
