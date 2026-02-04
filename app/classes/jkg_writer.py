@@ -1,0 +1,267 @@
+#!/usr/bin/env python
+# coding: utf-8
+"""
+Class that builds a JSON that conforms to the
+JSON Knowledge Graph (JKG) schema.
+"""
+
+import os
+
+import polars as pl
+import json
+import textwrap
+from tqdm import tqdm
+
+# Configuration file class
+from app.classes.ubkg_config import UbkgConfigParser
+# Centralized logging class
+from app.classes.ubkg_logging import UbkgLogging
+# Class that reads and prepares data from UMLS flat files
+from app.classes.umls_reader import UmlsReader
+
+class JkgWriter:
+
+    def __init__(self, cfg:UbkgConfigParser, ulog:UbkgLogging):
+        self.cfg = cfg
+        self.ulog = ulog
+
+        # Read configuration file to obtain location of output directory.
+        self.output_dir = self.cfg.get_value(section='directories', key='output_dir')
+
+        # Make output directory if it does not yet exist.
+        os.system(f"mkdir -p {self.output_dir}")
+
+        self.outfile = self.cfg.get_value(section='outfile', key='output_filename')
+        self.outpath = os.path.join(self.output_dir, self.outfile)
+
+        self.ulog.print_and_logger_info(f'Output directory: {self.output_dir}')
+
+        # UMLS reader object
+        # During instantiation, this object will build common DataFrames
+        # of concept-concept and concept-code relationships used to build
+        # both nodes and rels.
+        self.ureader = UmlsReader(cfg=cfg, ulog=ulog)
+
+    def _write_list(self, list_content: list, keyname:str, mode:str):
+        """
+        Writes a list to the JSON file as the value of a key, using
+        a TQDM progress bar.
+        :param keyname: name of the key
+        :param mode: write or append
+        :param list_content: list to write
+        """
+
+        with open(self.outpath, mode, encoding="utf-8") as f:
+            f.write('{\n  "' + keyname + '": [\n')
+            for i, node in enumerate(tqdm(list_content, desc=f"writing {keyname} array", total=len(list_content))):
+                if i:
+                    f.write(",\n")
+                # pretty dump node and indent it two extra spaces
+                node_json = json.dumps(node, ensure_ascii=False, indent=4)
+                indented = textwrap.indent(node_json, " " * 4)  # aligns with the surrounding JSON
+                f.write(indented)
+            f.write("\n  ]\n}\n")
+
+    def write_nodes_list(self):
+        """
+        Builds and writes the nodes list of the JKG file.
+
+        """
+
+        list_nodes= (self._get_source_node_list() +
+                     self._get_semantic_node_label_list() +
+                     self._get_rel_label_list() +
+                     self._get_concept_nodes_list())
+
+        dict_nodes = {"nodes": list_nodes}
+
+        self._write_list(list_content=list_nodes, keyname='nodes', mode='w')
+
+
+    def _get_source_node_list(self) -> list:
+        """
+        Builds the list of Source nodes for the nodes array of the JKG.JSON.
+        """
+
+        # Obtain sorted current English-language SABs from MRSAB.RRF.
+        colsabs = ['VSAB', 'RSAB', 'SON', 'SRL', 'TTYL']
+        # VSAB - versioned source
+        # RSAB - root source
+        # SON - official name of source
+        # SRL - source restriction level - can be used to filter out a licensed SAB
+        # TTYL - term types from the SAB
+        df = self.ureader.get_umls_file(filename='MRSAB', cols=colsabs)
+        df = df.sort('RSAB')
+
+        # Convert to a list of dictionaries for row-wise processing
+        rows = df.to_dicts()
+
+        # Build JSON output row by row.
+        # Start with hard-coded rows for:
+        # - the UMLS itself
+        # - NDC
+
+        listsources = [{"labels": ["Source"],
+                        "properties": {"id": "UMLS:UMLS", "name": "Unified Medical Language System",
+                                       "description": "United States National Institutes of Health (NIH) National Library of Medicine (NLM) Unified Medical Language System (UMLS) Knowledge Sources.",
+                                       "sab": "UMLS",
+                                       "source": "http://www.nlm.nih.gov/research/umls/licensedcontent/umlsknowledgesources.html"}},
+                       {"labels": ["Source"],
+                        "properties": {"id": "UMLS:NDC", "name": "National Drug Codes", "sab": "NDC"}}]
+
+        for row in tqdm(rows, desc="Building Source nodes"):
+            dict_node = {
+                "labels": ["Source"],
+                "properties": {
+                    "id": f"UMLS:{row['VSAB']}",
+                    "name": row["SON"],
+                    "sab": row["RSAB"],
+                    "srl": row["SRL"],
+                    "ttyl": row["TTYL"].split(",") if row["TTYL"] else []  # Convert TTYL to a list or an empty list
+                }
+            }
+            listsources.append(dict_node)
+
+        return listsources
+
+    def _get_semantic_node_label_list(self) -> list:
+        """
+        Builds the list of Node_Label nodes corresponding to the
+        Semantic Network for the nodes array of the JKG.JSON.
+
+        """
+
+        list_nodes = []
+
+        # Obtain information for the Semantic Network nodes from SRDEF.
+        colsem = ['RT', 'UI', 'STY_RL', 'DEF']
+        # RT - Record type: STY = semantic
+        # UI - Unique identifier
+        # STY_RL - name of the semantic relation
+        # DEF - definition
+        df = self.ureader.get_umls_file(filename='SRDEF', cols=colsem)
+        df = df.filter(pl.col('RT') == 'STY')
+
+        # Convert to a list of dictionaries for row-wise processing
+        rows = df.to_dicts()
+
+        # Build JSON output row by row.
+        for row in tqdm(rows, desc="Building Semantic Network Node_Label nodes"):
+            dict_node = {
+                "labels": ["Node_Label"],
+                "properties": {
+                    "id": f"UMLS:{row['UI']}",
+                    "def": row["DEF"],
+                    "node_label": row["STY_RL"],
+                    "sab": "UMLS"}
+            }
+            list_nodes.append(dict_node)
+
+        return list_nodes
+
+    def _get_rel_label_list(self) -> list:
+        """
+        Builds the list of Rel_Label nodes for the nodes array of the JKG.JSON.
+
+        """
+        list_nodes = []
+
+        #Get the DataFrame of concept-concept relationships built by the UmlsReader object.
+        df = self.ureader.df_concept_concept_rels
+        # Select the relationship labels.
+        df = df.select('rel_label').unique().sort('rel_label')
+
+        # Convert the columnar Polars DataFrame to dicts for row-level processing.
+        rows = df.to_dicts()
+
+        for row in tqdm(rows, desc="Building Rel_Label nodes from concept-concept relationships"):
+            dict_node = {
+                "labels": ["Rel_Label"],
+                "properties": {
+                    "id": f"UMLS:{row["rel_label"]}",
+                    "def": row["rel_label"],
+                    "rel_label": row["rel_label"],
+                    "sab": "UMLS"}
+            }
+            list_nodes.append(dict_node)
+
+        return list_nodes
+
+    def _get_concept_labels_list(self) -> pl.DataFrame:
+        """
+        Obtains a DataFrame that aggregates the semantic types for each CUI.
+
+        """
+
+        # Get semantic atoms (terms) by concept.
+        colsem = ['CUI', 'STY']
+        # CUI
+        # STY - semantic type
+        df = self.ureader.get_umls_file(filename='MRSTY', cols=colsem)
+
+        # normalize empty STY to null so they don't become empty strings in the lists
+        df = df.with_columns(
+            pl.when(pl.col("STY") == "").then(None).otherwise(pl.col("STY")).alias("STY")
+        )
+
+        # Group semantic type labels by CUI; aggregate into lists; then append "Concept" to each list.
+        dfsty = (
+            df.group_by("CUI", maintain_order=True)
+            .agg(pl.col("STY"))
+            .with_columns((pl.concat_list(pl.lit("Concept"), "STY")).alias("labels"))
+        )
+
+        return dfsty
+
+    def _get_concept_nodes_list(self) -> list:
+        """
+        Builds the list of Concept nodes of the nodes array of the JKG.JSON.
+        """
+        list_nodes = []
+
+        #Obtain the subset of English-language, non-suppressed records from
+        # MRCONSO built by the UmlsReader object.
+        df = self.ureader.df_concept_code_rels
+
+        # Identify the preferred term for each concept from
+        #   -- the Atom Status (TS) is preferred  (ISPREF=Y)
+        #   -- the String type (STT) is "PF" (Preferred form of term)
+        #   -- the Term Status is "P" (Preferred LUI of the CUI)
+        df = (df.filter(pl.col('ISPREF') == 'Y')
+              .filter(pl.col('STT') == 'PF')
+              .filter(pl.col('TS') == 'P')
+              .unique())
+
+        # Obtain sorted list of concept labels for each concept.
+        dflabels = self._get_concept_labels_list()
+
+        df = df.join(dflabels,
+                     how='inner',
+                     on='CUI')
+
+        rows = df.to_dicts()
+
+        for row in tqdm(rows, desc="Building Concept nodes"):
+            dict_node = {
+                "labels": row["labels"],
+                "properties": {
+                    "id": f"UMLS:{row["CUI"]}",
+                    "pref_term": row["STR"],
+                    "sab": "UMLS"}
+            }
+            list_nodes.append(dict_node)
+
+        return list_nodes
+
+    def write_rels_list(self):
+        """
+        Builds the list of relations array of the JKG.JSON.
+
+        """
+        # Build rels array:
+        # 1. Semantic relationships
+        # 2. Concept-concept relationships
+        # 3. Concept-code relationships
+        # 4. Add maps of NDC codes to CUIs to rels
+
+        return []

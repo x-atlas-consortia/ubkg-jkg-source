@@ -20,7 +20,6 @@ from app.classes.ubkg_logging import UbkgLogging
 # Functions to standardize codes and terms from vocabularies
 from app.utilities.ubkg_standardize import create_codeid, standardize_codeid, standardize_term
 
-
 class UmlsReader:
 
     def __init__(self, cfg: UbkgConfigParser, ulog: UbkgLogging):
@@ -35,68 +34,93 @@ class UmlsReader:
         #both the nodes and the rels arrays in JKG.JSON.
 
         #Concept-concept relationships
-        self.df_concept_concept_rels = self.get_concept_concept_rels()
+        self.df_concept_concept_rels = self._get_concept_concept_rels()
 
         #Concept-code relationships
-        self.df_concept_code_rels = self.get_concept_code_rels()
+        self.df_concept_code_rels = self._get_concept_code_rels()
 
-
-    def get_concept_concept_rels(self) -> pl.DataFrame:
+    def get_umls_file(self,filename: str, suppress: bool = True,
+                      english: bool = True, curver: bool = True, n_rows=None, cols=None,
+                      clean_file: bool = False) -> pl.DataFrame:
         """
-        Builds a DataFrame of information on the relationships
-        between UMLS concepts.
+        Returns a DataFrame corresponding to the optionally filtered content of a UMLS file.
+        Uses lazy loading (pl.scan_csv and collect).
+
+        :param suppress: if True and the file has a SUPPRESS (Suppressible) column, suppress
+        :param english: if True and the file has a LAT (Language) column, filter to English
+        :param curver: if True the file has a CURVER (Current Version) column, filter to current version
+        :param filename: UMLS filename
+        :param n_rows: number of rows to read
+        :param cols: columns to return
+        :param clean_file: if True the file will be pre-processed to remove double-quoted strings
         """
-        print('')
-        self.ulog.print_and_logger_info(f'Building information on concept-concept relationships...')
 
-        # Obtain non-suppressed relationships from MRREL.RRF.
-        colrels = ['CUI1', 'CUI2', 'REL', 'RELA', 'SAB']
-        # CUI1 - CUI of start concept
-        # CUI2 - CUI of end concept
-        # REL - required id for relationship (usually 2 character)
-        # RELA - optional, more specific description (usually delimited)
-        # SAB - source of relationship
+        # The Semantic Network definitions file is located in a separate directory from
+        # all other UMLS files used.
+        if filename == 'SRDEF':
+            ufile = os.path.join(self.cfg.get_value(section='directories', key='umls_dir'), 'NET', filename)
+        else:
+            ufile = os.path.join(self.cfg.get_value(section='directories', key='umls_dir'), 'META', filename + '.RRF')
 
-        df_mrrel = self.get_umls_file(filename='MRREL', cols=colrels)
-        # Get the relationship label--the value of RELA if not null else
-        # the value of REL.
-        df_mrrel = df_mrrel.with_columns(
-            pl.when(pl.col("RELA").is_null())
-            .then(pl.col("REL"))
-            .otherwise(pl.col("RELA"))
-            .alias("rel_label")
-        )
-        colrels.append('rel_label')
+        # Estimate number of rows to be processed.
+        if n_rows is not None:
+            est_total = n_rows
+        else:
+            file_size = os.path.getsize(ufile)
+            # Obtain the sample row size for the file from configuration.
+            avg_row_size = int(self.cfg.get_value(section='rowsizes', key=filename))
+            est_total = int(round(file_size / avg_row_size, 0))
+        rownum = str(est_total)
 
-        # Filter to English-language SABs.
-        # ulog.print_and_logger_info(f'--Filtering to relationships from English-language SABs using MRSAB.RRF...')
-        colsabs = ['RSAB', 'LAT']
-        # RSAB - SAB acronym
-        # LAT - language
-        df_mrsab = self.get_umls_file(filename='MRSAB', cols=colsabs)
-        # Filter to relationships defined in English-language SABs.
-        df_rel = (
-            df_mrrel.join(
-                df_mrsab,
-                how='inner',
-                left_on='SAB',
-                right_on='RSAB',
-                maintain_order='left')
-            .unique())
+        # Obtain the column header names from configuration.
+        listcol = self.cfg.get_value(section='columns', key=filename).split(',')
+        if cols is None:
+            cols = listcol
 
-        # Filter out inverse relationships.
-        df_forward = self.get_forward_relationships()
+        checksuppress = suppress and 'SUPPRESS' in listcol
+        checkenglish = english and 'LAT' in listcol
+        checkcurver = curver and 'CURVER' in listcol
 
-        df_rel = df_rel.join(
-            df_forward,
-            how='left',
-            left_on='RELA',
-            right_on='VALUE',
-        ).unique().select(colrels)
+        if clean_file:
+            # Pre-process the source file if one does not already exist.
+            ufile = self._get_clean_file(filename=filename)
 
-        return df_rel
+        # Lazy loading and filtering.
+        try:
+            start_time = time.time()
 
-    def get_clean_file(self, filename: str) -> str:
+            ldf = (pl.scan_csv(ufile,
+                               separator='|',
+                               new_columns=listcol,
+                               n_rows=n_rows)
+                   .unique())
+            if checksuppress:
+                ldf = (ldf.filter(pl.col('SUPPRESS') != 'O'))
+            if checkenglish:
+                ldf = (ldf.filter(pl.col('LAT') == 'ENG'))
+            if checkcurver:
+                ldf = (ldf.filter(pl.col('CURVER') == 'Y'))
+
+            # Convert LazyFrame to DataFrame with tqdm for progress.
+
+            with tqdm(total=est_total, desc=f'Processing {filename}.RRF', unit='row') as pbar:
+                df = ldf.collect()
+                pbar.update(1)
+
+            if cols is not None:
+                df = df.select(cols)
+
+            end_time = time.time()
+            duration = end_time - start_time
+            self.ulog.print_and_logger_info(
+                message=f'----Processed ~{rownum} rows from {filename} in {duration:.2f} seconds.')
+            return df
+
+        except FileNotFoundError:
+            self.ulog.print_and_logger_info(f'File {ufile} not found')
+            exit(1)
+
+    def _get_clean_file(self, filename: str) -> str:
         """
         Pre-processes a UMLS file to remove double-quoted strings.
         :param filename: UMLS filename
@@ -130,90 +154,7 @@ class UmlsReader:
 
         return cleanfile
 
-    def get_umls_file(self,filename: str, suppress: bool = True,
-                      english: bool = True, curver: bool = True, n_rows=None, cols=None,
-                      clean_file: bool = False) -> pl.DataFrame:
-        """
-        Returns a DataFrame corresponding to the optionally filtered content of a UMLS file.
-        Uses lazy loading (pl.scan_csv and collect).
-
-        :param suppress: if True and the file has a SUPPRESS (Suppressible) column, suppress
-        :param english: if True and the file has a LAT (Language) column, filter to English
-        :param curver: if True the file has a CURVER (Current Version) column, filter to current version
-        :param filename: UMLS filename
-        :param n_rows: number of rows to read
-        :param cols: columns to return
-        :param clean_file: if True the file will be pre-processed to remove double-quoted strings
-        :return: DataFrame
-        """
-
-        # The Semantic Network definitions file is located in a separate directory from
-        # all other UMLS files used.
-        if filename == 'SRDEF':
-            ufile = os.path.join(self.cfg.get_value(section='directories', key='umls_dir'), 'NET', filename)
-        else:
-            ufile = os.path.join(self.cfg.get_value(section='directories', key='umls_dir'), 'META', filename + '.RRF')
-
-        # Estimate number of rows to be processed.
-        if n_rows is not None:
-            est_total = n_rows
-        else:
-            file_size = os.path.getsize(ufile)
-            # Obtain the sample row size for the file from configuration.
-            avg_row_size = int(self.cfg.get_value(section='rowsizes', key=filename))
-            est_total = int(round(file_size / avg_row_size, 0))
-        rownum = str(est_total)
-
-        # Obtain the column header names from configuration.
-        listcol = self.cfg.get_value(section='columns', key=filename).split(',')
-        if cols is None:
-            cols = listcol
-
-        checksuppress = suppress and 'SUPPRESS' in listcol
-        checkenglish = english and 'LAT' in listcol
-        checkcurver = curver and 'CURVER' in listcol
-
-        if clean_file:
-            # Pre-process the source file if one does not already exist.
-            ufile = self.get_clean_file(filename=filename)
-
-        # Lazy loading and filtering.
-        try:
-            start_time = time.time()
-
-            ldf = (pl.scan_csv(ufile,
-                               separator='|',
-                               new_columns=listcol,
-                               n_rows=n_rows)
-                   .unique())
-            if checksuppress:
-                ldf = (ldf.filter(pl.col('SUPPRESS') != 'O'))
-            if checkenglish:
-                ldf = (ldf.filter(pl.col('LAT') == 'ENG'))
-            if checkcurver:
-                ldf = (ldf.filter(pl.col('CURVER') == 'Y'))
-
-            # Convert LazyFrame to DataFrame with tqdm for progress.
-
-            with tqdm(total=est_total, desc=f'Processing {filename}.RRF', unit='row') as pbar:
-                df = ldf.collect()
-                pbar.update(1)
-
-            if cols is not None:
-                df = df.select(cols)
-
-            end_time = time.time()
-            duration = end_time - start_time
-            self.ulog.print_and_logger_info(
-                message=f'----Processed ~{rownum} rows from {filename} in {duration:.2f} seconds.')
-            return df
-
-
-        except FileNotFoundError:
-            self.ulog.print_and_logger_info(f'File {ufile} not found')
-            exit(1)
-
-    def get_forward_relationships(self) -> pl.DataFrame:
+    def _get_forward_relationships(self) -> pl.DataFrame:
         """
         Builds a dataframe of information on "forward" relationships, defined
         to be the relationship in a bilateral pair of relationships with
@@ -224,10 +165,8 @@ class UmlsReader:
 
         :param cfg: UbkgConfigParser instance
         :param ulog: UbkgLogging instance
-        :return:
-        """
 
-        # self.ulog.print_and_logger_info(f'--Filtering out inverse relationships using MRDOC.RRF...')
+        """
 
         """
         For forward/inverse relationship pairs, MRDOC contains two records, with each relationship
@@ -290,11 +229,65 @@ class UmlsReader:
 
         return df_forward
 
-    def get_concept_code_rels(self) -> pl.DataFrame:
+    def _get_concept_concept_rels(self) -> pl.DataFrame:
+        """
+        Builds a DataFrame of information on the relationships
+        between UMLS concepts.
+        """
+        print('')
+        self.ulog.print_and_logger_info(f'Building information on concept-concept relationships...')
+
+        # Obtain non-suppressed relationships from MRREL.RRF.
+        colrels = ['CUI1', 'CUI2', 'REL', 'RELA', 'SAB']
+        # CUI1 - CUI of start concept
+        # CUI2 - CUI of end concept
+        # REL - required id for relationship (usually 2 character)
+        # RELA - optional, more specific description (usually delimited)
+        # SAB - source of relationship
+
+        df_mrrel = self.get_umls_file(filename='MRREL', cols=colrels)
+        # Get the relationship label--the value of RELA if not null else
+        # the value of REL.
+        df_mrrel = df_mrrel.with_columns(
+            pl.when(pl.col("RELA").is_null())
+            .then(pl.col("REL"))
+            .otherwise(pl.col("RELA"))
+            .alias("rel_label")
+        )
+        colrels.append('rel_label')
+
+        # Filter to English-language SABs.
+        # ulog.print_and_logger_info(f'--Filtering to relationships from English-language SABs using MRSAB.RRF...')
+        colsabs = ['RSAB', 'LAT']
+        # RSAB - SAB acronym
+        # LAT - language
+        df_mrsab = self.get_umls_file(filename='MRSAB', cols=colsabs)
+        # Filter to relationships defined in English-language SABs.
+        df_rel = (
+            df_mrrel.join(
+                df_mrsab,
+                how='inner',
+                left_on='SAB',
+                right_on='RSAB',
+                maintain_order='left')
+            .unique())
+
+        # Filter out inverse relationships.
+        df_forward = self._get_forward_relationships()
+
+        df_rel = df_rel.join(
+            df_forward,
+            how='left',
+            left_on='RELA',
+            right_on='VALUE',
+        ).unique().select(colrels)
+
+        return df_rel
+
+    def _get_concept_code_rels(self) -> pl.DataFrame:
         """
         Builds a DataFrame of information on the relationships
         between UMLS concepts (CUIs) and codes from UMLS vocabularies.
-        :return: DataFrame
         """
 
         print('')
