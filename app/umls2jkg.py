@@ -267,7 +267,7 @@ def main():
     repo_root = find_repo_root()
 
     # Centralized logging object
-    log_dir = os.path.join(repo_root,'log')
+    log_dir = os.path.join(repo_root,'app/log')
     log_file = 'umls2jkg.log'
     ulog = UbkgLogging(log_file=log_file,log_dir=log_dir)
     ulog.print_and_logger_info('-' * 50)
@@ -290,19 +290,6 @@ def main():
     # Start jkg.json file.
     # Make output directory if it does not yet exist.
     os.system(f"mkdir -p {output_dir}")
-
-    #--------
-    # PRELIMINARY DATAFRAMES
-
-    # Build concept-concept relationship DataFrame.
-    # This will be used to build elements in both the nodes and
-    # the rels arrays.
-    #df_concept_concept_rels = get_concept_concept_rels(cfg=cfg, ulog=ulog)
-
-    # Build concept-code relationship DataFrame.
-    # This will be used to build elements in both the nodes and
-    # the rels arrays.
-    #df_concept_code_rels = get_concept_code_rels(cfg=cfg, ulog=ulog)
 
     #list_nodes = get_nodes_list(cfg=cfg, ulog=ulog,
                                # df_concept_concept_rels=df_concept_concept_rels,
