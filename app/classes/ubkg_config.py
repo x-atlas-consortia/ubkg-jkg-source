@@ -7,7 +7,7 @@ from configparser import ConfigParser,ExtendedInterpolation
 import configparser
 import os
 
-# Centralized logging
+# Centralized logging class
 from app.classes.ubkg_logging import UbkgLogging
 
 class UbkgConfigParser:

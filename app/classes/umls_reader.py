@@ -30,14 +30,17 @@ class UmlsReader:
         message = 'NOTE: The processing time to read a 6 GB MRREL.RRF on 32 GB RAM MacBook is ~30s. The other files take significantly less time.'
         print(f"\033[32m{message}\033[0m")
 
-        #Build Dataframes that will be used to build elements in
-        #both the nodes and the rels arrays in JKG.JSON.
+        # Build Dataframes that will be used to build elements in
+        # both the nodes and the rels arrays in JKG.JSON.
 
-        #Concept-concept relationships
+        # Concept-concept relationships
         self.df_concept_concept_rels = self._get_concept_concept_rels()
 
-        #Concept-code relationships
+        # Concept-code relationships
         self.df_concept_code_rels = self._get_concept_code_rels()
+
+        # Semantic definitions
+        self.df_semantic_definitions = self._get_semantic_definitions()
 
     def get_umls_file(self,filename: str, suppress: bool = True,
                       english: bool = True, curver: bool = True, n_rows=None, cols=None,
@@ -55,9 +58,9 @@ class UmlsReader:
         :param clean_file: if True the file will be pre-processed to remove double-quoted strings
         """
 
-        # The Semantic Network definitions file is located in a separate directory from
-        # all other UMLS files used.
-        if filename == 'SRDEF':
+        # The Semantic Network definitions files and Metathesaurus files
+        # are located in separate directories.
+        if filename[:2] == 'SR':
             ufile = os.path.join(self.cfg.get_value(section='directories', key='umls_dir'), 'NET', filename)
         else:
             ufile = os.path.join(self.cfg.get_value(section='directories', key='umls_dir'), 'META', filename + '.RRF')
@@ -245,7 +248,7 @@ class UmlsReader:
         # RELA - optional, more specific description (usually delimited)
         # SAB - source of relationship
 
-        df_mrrel = self.get_umls_file(filename='MRREL', cols=colrels)
+        df_mrrel = self.get_umls_file(filename='MRREL', cols=colrels,n_rows=1000)
         # Get the relationship label--the value of RELA if not null else
         # the value of REL.
         df_mrrel = df_mrrel.with_columns(
@@ -344,4 +347,21 @@ class UmlsReader:
         )
 
         return df
+
+    def _get_semantic_definitions(self) -> pl.DataFrame:
+        """
+        Builds a DataFrame of information on semantic definitions from SRDEF
+
+        """
+
+        # Obtain information for the Semantic Network nodes from SRDEF.
+        colsem = ['RT', 'UI', 'STY_RL', 'DEF']
+        # RT - Record type: STY = semantic
+        # UI - Unique identifier
+        # STY_RL - name of the semantic relation
+        # DEF - definition
+        df = self.get_umls_file(filename='SRDEF', cols=colsem)
+
+        return df
+
 

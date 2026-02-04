@@ -133,13 +133,9 @@ class JkgWriter:
 
         list_nodes = []
 
-        # Obtain information for the Semantic Network nodes from SRDEF.
-        colsem = ['RT', 'UI', 'STY_RL', 'DEF']
-        # RT - Record type: STY = semantic
-        # UI - Unique identifier
-        # STY_RL - name of the semantic relation
-        # DEF - definition
-        df = self.ureader.get_umls_file(filename='SRDEF', cols=colsem)
+        # Obtain the common semantic definitions dataset built by the
+        # UmlsReader object at its initialization.
+        df = self.ureader.df_semantic_definitions
         df = df.filter(pl.col('RT') == 'STY')
 
         # Convert to a list of dictionaries for row-wise processing
@@ -264,4 +260,59 @@ class JkgWriter:
         # 3. Concept-code relationships
         # 4. Add maps of NDC codes to CUIs to rels
 
-        return []
+        list_rels = self._get_semantic_rel_list()
+
+
+        dict_nodes = {"rels": list_rels}
+
+        self._write_list(list_content=list_rels, keyname='rels', mode='w')
+
+        return list_rels
+
+    def _get_semantic_rel_list(self) -> list:
+        """
+        Builds the list of semantic rels array of the JKG.JSON.
+        """
+        list_rels = []
+
+        # Obtain the common semantic definitions dataset built by the
+        # UmlsReader object at its initialization.
+        df = self.ureader.df_semantic_definitions
+
+        # Obtain from SRSTRE1 (Fully inherited set of Relations (UI's),
+        # a file of the Semantic Network.
+        # Filter to the basic hierarchical relationships (T186).
+        df_srs = (self.ureader.get_umls_file(filename='SRSTRE1')
+                  .filter(pl.col('UI2')=='T186'))
+
+        # Join semantic definition DataFrame with the relations DataFrame
+        # to obtain isa relationships between elements of the Semantic
+        # Network.
+        df = df.join(df_srs,
+                     how='inner',
+                     left_on='UI',
+                     right_on='UI1')
+
+        rows = df.to_dicts()
+        for row in tqdm(rows, desc="Building semantic rels array"):
+            dict_rel = {
+                "label": "isa",
+                "end": {
+                    "properties" : {
+                        "id": f"UMLS:{row["UI3"]}"
+                    }
+                },
+                "properties":{
+                            "sab":"UMLS"
+                },
+                "start": {
+                    "properties" : {
+                        "id": f"UMLS:{row["UI"]}"
+                    }
+                }
+            }
+
+            list_rels.append(dict_rel)
+
+        return list_rels
+

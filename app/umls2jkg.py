@@ -10,13 +10,17 @@ Prerequisite:
 A subset of UMLS files built from a release of the UMLS, curated by
 MetamorphoSys. Files include:
 
+From the Metathesaurus:
 MRREL.RRF (relationships)
 MRSAB.RRF (sources)
-SRDEF (semantic type descriptions from the Semantic Network)
 MRSTY.RRF (concept semantic types)
 MRCONSO.RRF (concepts codes)
 MRDEF.RRF (concept definitions)
 MRSAT.RRF (concept attributes)
+
+From the Semantic Network:
+SRDEF (semantic type descriptions from the Semantic Network)
+SRSTRE1 (Fully inherited set of Relations (UI's)
 
 """
 
@@ -25,17 +29,14 @@ import time
 
 from datetime import timedelta
 
-import polars as pl
-import json
-from tqdm import tqdm
-
 # Configuration file class
-from app.classes.ubkg_config import UbkgConfigParser
+
+from classes.ubkg_config import UbkgConfigParser
 # Centralized logging class
-from app.classes.ubkg_logging import UbkgLogging
+from classes.ubkg_logging import UbkgLogging
 
 # Class that writes to the JKG JSON
-from app.classes.jkg_writer import JkgWriter
+from classes.jkg_writer import JkgWriter
 
 # Function to find the repo root
 from utilities.find_repo_root import find_repo_root
@@ -71,7 +72,7 @@ def main():
     ulog.print_and_logger_info('-' * 50)
 
     # Build and write the nodes list.
-    jwriter.write_nodes_list()
+    #jwriter.write_nodes_list()
 
     # Build and write the rels list.
     jwriter.write_rels_list()
