@@ -64,12 +64,12 @@ def main():
     cfg_path = os.path.join(repo_root,'app/umls2jkg.ini')
     cfg = UbkgConfigParser(path=cfg_path,log_dir=log_dir, log_file=log_file)
 
-    # JKG writer object
-    jwriter = JkgWriter(cfg=cfg, ulog=ulog)
-
     ulog.print_and_logger_info('-' * 50)
     ulog.print_and_logger_info('UMLS TO JKG CONVERSION')
     ulog.print_and_logger_info('-' * 50)
+
+    # JKG writer object
+    jwriter = JkgWriter(cfg=cfg, ulog=ulog)
 
     # Build and write the nodes list.
     #jwriter.write_nodes_list()

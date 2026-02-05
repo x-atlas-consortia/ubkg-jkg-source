@@ -342,21 +342,21 @@ class JkgWriter:
         for row in tqdm(rows, desc="Building concept-concept rels array"):
 
             # In the concept-concept relationship DataFrame,
-            # CUI1 identifies the start concept and CUI2 identifies
+            # CUI2 identifies the start concept and CUI1 identifies
             # the end concept of the relationship.
             dict_rel = {
                 "label": f"{row["rel_label"]}",
                 "end": {
                     "properties" : {
-                        "id": f"UMLS:{row["CUI2"]}"
+                        "id": f"UMLS:{row["CUI1"]}"
                     }
                 },
                 "properties":{
-                            "sab":"UMLS"
+                            "sab": row["SAB"]
                 },
                 "start": {
                     "properties" : {
-                        "id": f"UMLS:{row["CUI1"]}"
+                        "id": f"UMLS:{row["CUI2"]}"
                     }
                 }
             }

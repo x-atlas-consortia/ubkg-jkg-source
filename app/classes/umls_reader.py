@@ -230,8 +230,8 @@ class UmlsReader:
 
         # Obtain non-suppressed relationships from MRREL.RRF.
         colrels = ['CUI1', 'CUI2', 'REL', 'RELA', 'SAB']
-        # CUI1 - CUI of start concept
-        # CUI2 - CUI of end concept
+        # CUI1 - CUI of end concept
+        # CUI2 - CUI of start concept
         # REL - required id for relationship (usually 2 character)
         # RELA - optional, more specific description (usually delimited)
         # SAB - source of relationship
