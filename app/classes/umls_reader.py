@@ -236,7 +236,7 @@ class UmlsReader:
         # RELA - optional, more specific description (usually delimited)
         # SAB - source of relationship
 
-        df_mrrel = self.get_umls_file(filename='MRREL', cols=colrels)
+        df_mrrel = self.get_umls_file(filename='MRREL', cols=colrels,n_rows=1000)
         # Get the relationship label--the value of RELA if not null else
         # the value of REL.
         df_mrrel = df_mrrel.with_columns(

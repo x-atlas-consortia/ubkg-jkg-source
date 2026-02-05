@@ -18,6 +18,8 @@ from app.classes.ubkg_config import UbkgConfigParser
 from app.classes.ubkg_logging import UbkgLogging
 # Class that reads and prepares data from UMLS flat files
 from app.classes.umls_reader import UmlsReader
+# Class that writes to JSON output
+from app.classes.json_writer import JsonWriter
 
 class JkgWriter:
 
@@ -31,47 +33,21 @@ class JkgWriter:
         # Make output directory if it does not yet exist.
         os.system(f"mkdir -p {self.output_dir}")
 
-        self.outfile = self.cfg.get_value(section='json_out', key='output_filename')
-        self.pretty = self.cfg.get_value(section='json_out', key='pretty')
-        self.indent = self.cfg.get_value(section='json_out', key='indent')
-
-        self.outpath = os.path.join(self.output_dir, self.outfile)
-
-        self.ulog.print_and_logger_info(f'Output directory: {self.output_dir}')
+        # JsonWriter object
+        outfile = self.cfg.get_value(section='json_out', key='output_filename')
+        outpath = os.path.join(self.output_dir, outfile)
+        self.ulog.print_and_logger_info(f'Output file: {outpath}')
+        pretty = self.cfg.get_value(section='json_out', key='pretty')
+        indent = self.cfg.get_value(section='json_out', key='indent')
+        self.json_writer = JsonWriter(outpath=outpath, pretty=pretty, indent=indent)
 
         # UMLS reader object
-        # During instantiation, this object will build common DataFrames
-        # of concept-concept and concept-code relationships used to build
-        # both nodes and rels.
+        # During its instantiation, the UmlsReader object will read
+        # UMLS source files to build common DataFrames used
+        # to construct both nodes and rels lists. JkgWriter will use
+        # the UmlsReader to read other UMLS files
+        # when they are needed.
         self.ureader = UmlsReader(cfg=cfg, ulog=ulog)
-
-    def _write_list(self, list_content: list, keyname:str, mode:str):
-        """
-        Writes a list to the JSON file as the value of a key, using
-        a TQDM progress bar.
-        :param keyname: name of the key
-        :param mode: write or append
-        :param list_content: list to write
-        """
-
-        indent_spaces = int(self.indent)
-        indent_prefix = " " * indent_spaces
-
-        with open(self.outpath, mode, encoding="utf-8") as f:
-            f.write('{\n  "' + keyname + '": [\n')
-            for i, node in enumerate(tqdm(list_content, desc=f"writing {keyname} array", total=len(list_content))):
-                if i:
-                    f.write(",\n")
-                if self.pretty=="true":
-                    # pretty dump node and indent it
-                    node_json = json.dumps(node, ensure_ascii=False, indent=indent_spaces)
-                    indented = textwrap.indent(node_json, indent_prefix)
-                    f.write(indented)
-                else:
-                    node_json = json.dumps(node, ensure_ascii=False, separators=(',', ':'))
-                    f.write(indent_prefix + node_json)
-
-            f.write("\n  ]\n}\n")
 
     def write_nodes_list(self):
         """
@@ -84,10 +60,7 @@ class JkgWriter:
                      self._get_rel_label_list() +
                      self._get_concept_nodes_list())
 
-        dict_nodes = {"nodes": list_nodes}
-
-        self._write_list(list_content=list_nodes, keyname='nodes', mode='w')
-
+        self.json_writer.write_list(list_content=list_nodes, keyname='nodes', mode='w')
 
     def _get_source_node_list(self) -> list:
         """
@@ -274,9 +247,7 @@ class JkgWriter:
         #list_rels = self._get_semantic_rel_list()
         list_rels = self._get_concept_concept_rel_list()
 
-        dict_nodes = {"rels": list_rels}
-
-        self._write_list(list_content=list_rels, keyname='rels', mode='w')
+        self.json_writer.write_list(list_content=list_rels, keyname='rels', mode='w')
 
         return list_rels
 
