@@ -31,7 +31,10 @@ class JkgWriter:
         # Make output directory if it does not yet exist.
         os.system(f"mkdir -p {self.output_dir}")
 
-        self.outfile = self.cfg.get_value(section='outfile', key='output_filename')
+        self.outfile = self.cfg.get_value(section='json_out', key='output_filename')
+        self.pretty = self.cfg.get_value(section='json_out', key='pretty')
+        self.indent = self.cfg.get_value(section='json_out', key='indent')
+
         self.outpath = os.path.join(self.output_dir, self.outfile)
 
         self.ulog.print_and_logger_info(f'Output directory: {self.output_dir}')
@@ -51,15 +54,23 @@ class JkgWriter:
         :param list_content: list to write
         """
 
+        indent_spaces = int(self.indent)
+        indent_prefix = " " * indent_spaces
+
         with open(self.outpath, mode, encoding="utf-8") as f:
             f.write('{\n  "' + keyname + '": [\n')
             for i, node in enumerate(tqdm(list_content, desc=f"writing {keyname} array", total=len(list_content))):
                 if i:
                     f.write(",\n")
-                # pretty dump node and indent it two extra spaces
-                node_json = json.dumps(node, ensure_ascii=False, indent=4)
-                indented = textwrap.indent(node_json, " " * 4)  # aligns with the surrounding JSON
-                f.write(indented)
+                if self.pretty=="true":
+                    # pretty dump node and indent it
+                    node_json = json.dumps(node, ensure_ascii=False, indent=indent_spaces)
+                    indented = textwrap.indent(node_json, indent_prefix)
+                    f.write(indented)
+                else:
+                    node_json = json.dumps(node, ensure_ascii=False, separators=(',', ':'))
+                    f.write(indent_prefix + node_json)
+
             f.write("\n  ]\n}\n")
 
     def write_nodes_list(self):
@@ -260,8 +271,8 @@ class JkgWriter:
         # 3. Concept-code relationships
         # 4. Add maps of NDC codes to CUIs to rels
 
-        list_rels = self._get_semantic_rel_list()
-
+        #list_rels = self._get_semantic_rel_list()
+        list_rels = self._get_concept_concept_rel_list()
 
         dict_nodes = {"rels": list_rels}
 
@@ -291,7 +302,8 @@ class JkgWriter:
         df = df.join(df_srs,
                      how='inner',
                      left_on='UI',
-                     right_on='UI1')
+                     right_on='UI1',
+                     maintain_order='left').sort(['UI','UI3'])
 
         rows = df.to_dicts()
         for row in tqdm(rows, desc="Building semantic rels array"):
@@ -315,4 +327,42 @@ class JkgWriter:
             list_rels.append(dict_rel)
 
         return list_rels
+
+    def _get_concept_concept_rel_list(self) -> list:
+        """
+        Builds the list of concept-concept rels array of the JKG.JSON.
+        """
+        list_rels = []
+
+        # Obtain the common concept-concept relationship dataset built by the
+        # UmlsReader object at its initialization.
+        df = self.ureader.df_concept_concept_rels
+
+        rows = df.to_dicts()
+        for row in tqdm(rows, desc="Building concept-concept rels array"):
+
+            # In the concept-concept relationship DataFrame,
+            # CUI1 identifies the start concept and CUI2 identifies
+            # the end concept of the relationship.
+            dict_rel = {
+                "label": f"{row["rel_label"]}",
+                "end": {
+                    "properties" : {
+                        "id": f"UMLS:{row["CUI2"]}"
+                    }
+                },
+                "properties":{
+                            "sab":"UMLS"
+                },
+                "start": {
+                    "properties" : {
+                        "id": f"UMLS:{row["CUI1"]}"
+                    }
+                }
+            }
+
+            list_rels.append(dict_rel)
+
+        return list_rels
+
 

@@ -157,17 +157,14 @@ class UmlsReader:
 
         return cleanfile
 
-    def _get_forward_relationships(self) -> pl.DataFrame:
+    def _get_inverse_relationships(self) -> pl.DataFrame:
         """
-        Builds a dataframe of information on "forward" relationships, defined
+        Builds a dataframe of information on "inverse" relationships, defined
         to be the relationship in a bilateral pair of relationships with
-        term that is alphabetically last.
+        term that is alphabetically first.
 
         For example, for the bilateral pair has_nerve_supply/nerve_supply_of,
-        "nerve_supply_of" is considered the forward relationship.
-
-        :param cfg: UbkgConfigParser instance
-        :param ulog: UbkgLogging instance
+        "has_nerve_supply" is considered the inverse relationship.
 
         """
 
@@ -180,8 +177,8 @@ class UmlsReader:
         RELA | nerve_supply_of | rela_inverse | has_nerve_supply |
         RELA | has_nerve_supply | rela_inverse | nerve_supply_of |
 
-        Resolve the paired rows and select as the "forward relationship"
-        the relationship for which the value is the last alphabetically
+        Resolve the paired rows and select as the "inverse relationship"
+        the relationship for which the value is the first alphabetically
         in the pair.
         """
 
@@ -189,24 +186,6 @@ class UmlsReader:
                                 .filter(pl.col('DOCKEY') == 'RELA')
                                 .filter(pl.col('TYPE') == 'rela_inverse'))
 
-        df_forward = (
-            df_inverse_rel_pairs
-            .with_columns(
-                # Create an identifier for pairs, considering VALUE and EXPL as reciprocal links.
-                pl.when(pl.col("VALUE") < pl.col("EXPL"))
-                .then(pl.col("VALUE") + "~" + pl.col("EXPL"))
-                .otherwise(pl.col("EXPL") + "~" + pl.col("VALUE"))
-                .alias("pair_group")
-            )
-            .group_by("pair_group")  # Group on the pair identifier
-            .agg([
-                # Retain only the row with the alphabetically last VALUE
-                pl.col("VALUE").sort().last().alias("VALUE"),
-                pl.col("DOCKEY").last(),
-                pl.col("TYPE").last(),
-                pl.col("EXPL").last(),
-            ])
-        )
 
         df_inverse = (
             df_inverse_rel_pairs
@@ -219,10 +198,15 @@ class UmlsReader:
             )
             .group_by("pair_group")  # Group on the pair identifier
             .agg([
-                # Retain only the row with the alphabetically last VALUE
-                pl.col("VALUE").sort().first().alias("VALUE")
+                # Retain only the row with the alphabetically first VALUE
+                pl.col("VALUE").sort().first().alias("VALUE"),
+                pl.col("DOCKEY").first(),
+                pl.col("TYPE").first(),
+                pl.col("EXPL").first(),
             ])
         )
+
+        df_inverse = df_inverse.with_columns((pl.col("VALUE")).alias("inverse_relationship"))
 
         # Print out the inverse relationships for comparison with the
         # manually-curated version.
@@ -230,7 +214,11 @@ class UmlsReader:
         # ulog.print_and_logger_info(f'(List of filtered inverse relationships at {out_file})')
         df_inverse.select(pl.col('VALUE')).sort('VALUE').write_csv(out_file)
 
-        return df_forward
+        out_file = os.path.join(self.cfg.get_value(section='directories', key='output_dir'),
+                                'relationship_pairs.csv')
+        df_inverse_rel_pairs.write_csv(out_file)
+
+        return df_inverse.select('inverse_relationship')
 
     def _get_concept_concept_rels(self) -> pl.DataFrame:
         """
@@ -248,7 +236,7 @@ class UmlsReader:
         # RELA - optional, more specific description (usually delimited)
         # SAB - source of relationship
 
-        df_mrrel = self.get_umls_file(filename='MRREL', cols=colrels,n_rows=1000)
+        df_mrrel = self.get_umls_file(filename='MRREL', cols=colrels)
         # Get the relationship label--the value of RELA if not null else
         # the value of REL.
         df_mrrel = df_mrrel.with_columns(
@@ -276,14 +264,16 @@ class UmlsReader:
             .unique())
 
         # Filter out inverse relationships.
-        df_forward = self._get_forward_relationships()
+        df_inverse = self._get_inverse_relationships()
 
-        df_rel = df_rel.join(
-            df_forward,
-            how='left',
+        # anti-join
+        df_rel = ((df_rel.join(
+            df_inverse,
+            how='anti',
             left_on='RELA',
-            right_on='VALUE',
-        ).unique().select(colrels)
+            right_on='inverse_relationship')))
+
+        df_rel = df_rel.select(colrels).unique()
 
         return df_rel
 
@@ -360,7 +350,7 @@ class UmlsReader:
         # UI - Unique identifier
         # STY_RL - name of the semantic relation
         # DEF - definition
-        df = self.get_umls_file(filename='SRDEF', cols=colsem)
+        df = self.get_umls_file(filename='SRDEF', cols=colsem).unique()
 
         return df
 
