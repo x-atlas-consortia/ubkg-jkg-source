@@ -55,10 +55,13 @@ class JkgWriter:
 
         """
 
-        list_nodes= (self._get_source_node_list() +
-                     self._get_semantic_node_label_list() +
-                     self._get_rel_label_list() +
-                     self._get_concept_nodes_list())
+        #list_nodes= (self._get_source_node_list() +
+                     #self._get_semantic_node_label_list() +
+                     #self._get_rel_label_list() +
+                     #self._get_concept_nodes_list() +
+                     #self._get_term_nodes_list())
+
+        list_nodes = self._get_term_nodes_list() # dev
 
         self.json_writer.write_list(list_content=list_nodes, keyname='nodes', mode='w')
 
@@ -228,6 +231,30 @@ class JkgWriter:
                     "id": f"UMLS:{row["CUI"]}",
                     "pref_term": row["STR"],
                     "sab": "UMLS"}
+            }
+            list_nodes.append(dict_node)
+
+        return list_nodes
+
+    def _get_term_nodes_list(self) -> list:
+        """
+        Builds the list of Term nodes of the nodes array of the JKG.JSON.
+        """
+        list_nodes = []
+
+        # Obtain the subset of English-language, non-suppressed records of
+        # concept-code relationships built by the UmlsReader object.
+        df = self.ureader.df_concept_code_rels.select('STR').unique().sort('STR')
+
+        rows = df.to_dicts()
+
+        for row in tqdm(rows, desc="Building Term nodes"):
+
+            dict_node = {
+                "labels": ["Term"],
+                "properties": {
+                    "id": row["STR"]
+                    }
             }
             list_nodes.append(dict_node)
 
