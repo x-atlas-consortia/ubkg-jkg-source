@@ -8,8 +8,6 @@ JSON Knowledge Graph (JKG) schema.
 import os
 
 import polars as pl
-import json
-import textwrap
 from tqdm import tqdm
 
 # Configuration file class
@@ -49,19 +47,24 @@ class JkgWriter:
         # when they are needed.
         self.ureader = UmlsReader(cfg=cfg, ulog=ulog)
 
-    def write_nodes_list(self):
+        # Build and write the nodes list.
+        # self._write_nodes_list()
+
+        # Build and write the rels list.
+        self._write_rels_list()
+
+    def _write_nodes_list(self):
         """
         Builds and writes the nodes list of the JKG file.
 
         """
 
-        #list_nodes= (self._get_source_node_list() +
-                     #self._get_semantic_node_label_list() +
-                     #self._get_rel_label_list() +
-                     #self._get_concept_nodes_list() +
-                     #self._get_term_nodes_list())
+        list_nodes= (self._get_source_node_list() +
+                     self._get_semantic_node_label_list() +
+                     self._get_rel_label_list() +
+                     self._get_concept_nodes_list() +
+                     self._get_term_nodes_list())
 
-        list_nodes = self._get_term_nodes_list() # dev
 
         self.json_writer.write_list(list_content=list_nodes, keyname='nodes', mode='w')
 
@@ -260,7 +263,7 @@ class JkgWriter:
 
         return list_nodes
 
-    def write_rels_list(self):
+    def _write_rels_list(self):
         """
         Builds the list of relations array of the JKG.JSON.
 
@@ -271,8 +274,10 @@ class JkgWriter:
         # 3. Concept-code relationships
         # 4. Add maps of NDC codes to CUIs to rels
 
-        #list_rels = self._get_semantic_rel_list()
-        list_rels = self._get_concept_concept_rel_list()
+        #list_rels = (self._get_semantic_rel_list() +
+                     #self._get_concept_concept_rel_list())
+
+        list_rels = self._get_concept_code_rel_list()
 
         self.json_writer.write_list(list_content=list_rels, keyname='rels', mode='w')
 
@@ -355,6 +360,45 @@ class JkgWriter:
                 "start": {
                     "properties" : {
                         "id": f"UMLS:{row["CUI2"]}"
+                    }
+                }
+            }
+
+            list_rels.append(dict_rel)
+
+        return list_rels
+
+    def _get_concept_code_rel_list(self) -> list:
+        """
+        Builds the list of concept-code rels array of the JKG.JSON.
+        """
+        list_rels = []
+
+        # Obtain the common concept-code relationship dataset built by the
+        # UmlsReader object at its initialization.
+        df = self.ureader.df_concept_code_rels
+
+        rows = df.to_dicts()
+        for row in tqdm(rows, desc="Building concept-code rels array"):
+            # In the concept-code relationship DataFrame,
+            # CUI identifies the start concept and
+            # CODE identifies the end concept of the relationship.
+            dict_rel = {
+                "label": "CODE",
+                "end": {
+                    "properties": {
+                        "id": row["STR"],
+                        "def": row["DEF"],
+                        "tty": row["TTY"],
+                        "codeid": row["codeid"]
+                    }
+                },
+                "properties": {
+                    "sab": row["SAB"]
+                },
+                "start": {
+                    "properties": {
+                        "id": f"UMLS:{row["CUI"]}"
                     }
                 }
             }

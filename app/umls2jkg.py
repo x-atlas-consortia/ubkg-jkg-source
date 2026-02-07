@@ -68,14 +68,8 @@ def main():
     ulog.print_and_logger_info('UMLS TO JKG CONVERSION')
     ulog.print_and_logger_info('-' * 50)
 
-    # JKG writer object
+    # Instantiate the JkgWriter object that builds and writes the JKG JSON file.
     jwriter = JkgWriter(cfg=cfg, ulog=ulog)
-
-    # Build and write the nodes list.
-    jwriter.write_nodes_list()
-
-    # Build and write the rels list.
-    #jwriter.write_rels_list()
 
     elapsed_time = time.time() - start_time
     ulog.print_and_logger_info(f'Completed. Total Elapsed time {"{:0>8}".format(str(timedelta(seconds=elapsed_time)))}')

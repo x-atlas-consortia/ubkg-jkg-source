@@ -7,18 +7,22 @@ of a subset produced by the UMLS MetamorphoSYS application.
 
 import os
 import time
+from datetime import timedelta
 
 import polars as pl
-import json
 from tqdm import tqdm
 
 # Configuration file class
 from app.classes.ubkg_config import UbkgConfigParser
 # Centralized logging class
 from app.classes.ubkg_logging import UbkgLogging
+# Timer for lazy events
+from app.classes.ubkg_timer import UbkgTimer
 
 # Functions to standardize codes and terms from vocabularies
 from app.utilities.ubkg_standardize import create_codeid, standardize_codeid, standardize_term
+# color printing
+from app.utilities.print_color import print_color
 
 class UmlsReader:
 
@@ -26,9 +30,6 @@ class UmlsReader:
 
         self.cfg = cfg
         self.ulog = ulog
-
-        message = 'NOTE: The processing time to read a 6 GB MRREL.RRF on 32 GB RAM MacBook is ~30s. The other files take significantly less time.'
-        print(f"\033[32m{message}\033[0m")
 
         # Build Dataframes that will be used to build elements in
         # both the nodes and the rels arrays in JKG.JSON.
@@ -88,40 +89,53 @@ class UmlsReader:
             # Pre-process the source file if one does not already exist.
             ufile = self._get_clean_file(filename=filename)
 
+        # If the file is to be scanned instead of read, provide an estimate.
+        self._estimate_scan_time(filename=filename)
+
         # Lazy loading and filtering.
         try:
             start_time = time.time()
 
-            ldf = (pl.scan_csv(ufile,
-                               separator='|',
-                               new_columns=listcol,
-                               n_rows=n_rows)
-                   .unique())
-            if checksuppress:
-                ldf = (ldf.filter(pl.col('SUPPRESS') != 'O'))
-            if checkenglish:
-                ldf = (ldf.filter(pl.col('LAT') == 'ENG'))
-            if checkcurver:
-                ldf = (ldf.filter(pl.col('CURVER') == 'Y'))
-
-            # Convert LazyFrame to DataFrame with tqdm for progress.
-
-            with tqdm(total=est_total, desc=f'Processing {filename}.RRF', unit='row') as pbar:
-                df = ldf.collect()
-                pbar.update(1)
-
+            df = self._scan_with_timer(filename=ufile,
+                                       separator='|',
+                                       new_columns=listcol,
+                                       n_rows=n_rows,
+                                       checksuppress=checksuppress,
+                                       checkenglish=checkenglish,
+                                       checkcurver=checkcurver)
             if cols is not None:
                 df = df.select(cols)
 
             end_time = time.time()
             duration = end_time - start_time
+
             self.ulog.print_and_logger_info(
-                message=f'----Processed ~{rownum} rows from {filename} in {duration:.2f} seconds.')
+                message=f'\n----Scanned ~{rownum} rows from {filename} in {duration:.2f} seconds.')
             return df
 
         except FileNotFoundError:
             self.ulog.print_and_logger_info(f'File {ufile} not found')
             exit(1)
+
+    def _estimate_scan_time(self, filename: str) -> str:
+        """
+        Provides an estimate of the scan time of a UMLS file.
+        The tqdm progress bar does not work with Polar's scan_csv function,
+        because scan_csv is lazy loading.
+        :param filename: UMLS filename
+        """
+
+        scanfiles = self.cfg.get_section(section='scanestimates')
+
+        if filename.lower() in scanfiles.keys():
+
+            scanos = self.cfg.get_value(section='scanestimates', key='os')
+            scanmemory = self.cfg.get_value(section='scanestimates', key='memory')
+            scantime = self.cfg.get_value(section='scanestimates', key=filename)
+
+            message = f'\nThe historical time to scan the entire {filename} on {scanmemory} RAM {scanos} machine is < {scantime}.'
+            print_color(message=message,colorcode='green')
+
 
     def _get_clean_file(self, filename: str) -> str:
         """
@@ -138,9 +152,9 @@ class UmlsReader:
 
         if os.path.exists(cleanfile):
             self.ulog.print_and_logger_warning(
-                f'----Using existing cleaned file {cleanfile}. Delete this file to force pre-processing.')
+                f'Using existing cleaned file {cleanfile}. Delete this file to force pre-processing.')
         else:
-            self.ulog.print_and_logger_info(f'----Cleaning file: {dirtyfile}...')
+            self.ulog.print_and_logger_info(f'Cleaning file: {dirtyfile}...')
 
             # Get the total number of lines in the input file
             with open(dirtyfile, "r", encoding="utf-8") as infile:
@@ -157,6 +171,56 @@ class UmlsReader:
 
         return cleanfile
 
+    def _scan_with_timer(self,filename:str, separator:str,
+                         checksuppress:bool, checkenglish:bool, checkcurver:bool,
+                         new_columns: list, n_rows:int,
+                         refresh_interval: float = 0.2,
+
+                         ) -> pl.DataFrame:
+        """
+        The Polars scan_csv function is not amenable to wrapping in a
+        tqdm progress indicator. This function starts a separate thread that
+        displays a timer around the scan.
+
+        :param filename: path to file to scan
+        :param separator: separator
+        :param new_columns: new_columns
+        :param n_rows: n_rows
+        :param checksuppress: flag - filter on SUPPRESS field, if it is a column
+        :param checkenglish: flag - filter on LAT=ENG, if LAT is a column
+        :param checkcurver: flag - filter on CURVER, if CURVER is a column
+
+        :return: the DataFrame
+        """
+
+        # Start a timer.
+        utimer = UbkgTimer(display_msg=f"Scanning {filename}")
+
+        try:
+            # Scan file.
+            lf = pl.scan_csv(filename,
+                             separator=separator,
+                             has_header=False,
+                             new_columns=new_columns,
+                             n_rows=n_rows).unique()
+
+            # Optional filtering.
+            if checksuppress:
+                lf = (lf.filter(pl.col('SUPPRESS') != 'O'))
+            if checkenglish:
+                lf = (lf.filter(pl.col('LAT') == 'ENG'))
+            if checkcurver:
+                lf = (lf.filter(pl.col('CURVER') == 'Y'))
+
+            # Trigger the scan and compute. This is the blocking operation that is timed.
+            df = lf.collect()
+
+        finally:
+            # Stop timer.
+            utimer.stop()
+
+        return df
+
     def _get_inverse_relationships(self) -> pl.DataFrame:
         """
         Builds a dataframe of information on "inverse" relationships, defined
@@ -166,9 +230,6 @@ class UmlsReader:
         For example, for the bilateral pair has_nerve_supply/nerve_supply_of,
         "has_nerve_supply" is considered the inverse relationship.
 
-        """
-
-        """
         For forward/inverse relationship pairs, MRDOC contains two records, with each relationship
         in the pair in both the VALUE and EXPL columns.
 
@@ -236,7 +297,7 @@ class UmlsReader:
         # RELA - optional, more specific description (usually delimited)
         # SAB - source of relationship
 
-        df_mrrel = self.get_umls_file(filename='MRREL', cols=colrels,n_rows=1000)
+        df_mrrel = self.get_umls_file(filename='MRREL', cols=colrels, n_rows=1000)
         # Get the relationship label--the value of RELA if not null else
         # the value of REL.
         df_mrrel = df_mrrel.with_columns(
@@ -313,12 +374,17 @@ class UmlsReader:
         df_mrdef = self.get_umls_file(filename='MRDEF', cols=col_def, clean_file=True)
 
         # Join MRDEF data to MRCONSO data.
+        self.ulog.print_and_logger_info('Joining MRCONSO and MRDEF...')
+        start_time = time.time()
         df = df_mrconso.join(
             df_mrdef,
             how='left',
             on='AUI',
             maintain_order='left'
         )
+        elapsed_time = time.time() - start_time
+        self.ulog.print_and_logger_info(
+            f'Join completed in {"{:0>8}".format(str(timedelta(seconds=elapsed_time)))}')
 
         # Create standardized codeid.
         # Apply the transformations in steps.

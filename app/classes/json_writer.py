@@ -47,7 +47,7 @@ class JsonWriter:
         with open(self.outpath, mode, encoding="utf-8") as f:
             f.write('{\n' + top_indent + '"' + keyname + '":' + top_indent + '[\n')
 
-            for i, node in enumerate(tqdm(list_content, desc=f"writing {keyname} array", total=len(list_content))):
+            for i, node in enumerate(tqdm(list_content, desc=f"Writing {keyname} array", total=len(list_content))):
 
                 if i:
                     # Line feed at the start of each node.
