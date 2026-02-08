@@ -66,14 +66,20 @@ class UmlsReader:
         else:
             ufile = os.path.join(self.cfg.get_value(section='directories', key='umls_dir'), 'META', filename + '.RRF')
 
-        # Estimate number of rows to be processed.
+        # Because scan_csv works with the entire file at once,
+        # It does not report the number of rows in the file.
+        # Provide an estimate to document performance.
         if n_rows is not None:
+            # Explicit subset.
             est_total = n_rows
         else:
+            # Estimate, using the known file size in bytes and the number
+            # of characters in a sample row in the file.
             file_size = os.path.getsize(ufile)
             # Obtain the sample row size for the file from configuration.
             avg_row_size = int(self.cfg.get_value(section='rowsizes', key=filename))
             est_total = int(round(file_size / avg_row_size, 0))
+
         rownum = str(est_total)
 
         # Obtain the column header names from configuration.
@@ -81,18 +87,22 @@ class UmlsReader:
         if cols is None:
             cols = listcol
 
+        # Determine optional filtering.
         checksuppress = suppress and 'SUPPRESS' in listcol
         checkenglish = english and 'LAT' in listcol
         checkcurver = curver and 'CURVER' in listcol
 
         if clean_file:
-            # Pre-process the source file if one does not already exist.
+            # Pre-process (clean) the source file if one does not already exist.
             ufile = self._get_clean_file(filename=filename)
 
-        # If the file is to be scanned instead of read, provide an estimate.
-        self._estimate_scan_time(filename=filename)
+        # If the file is to be scanned instead of read, provide the historical
+        # scan/collection time.
+        scan_estimate = self._estimate_scan_time(filename=filename)
+        if scan_estimate != '':
+            print_color(message=scan_estimate, colorcode='green')
 
-        # Lazy loading and filtering.
+        # Scan--i.e., use lazy loading and filtering.
         try:
             start_time = time.time()
 
@@ -109,8 +119,8 @@ class UmlsReader:
             end_time = time.time()
             duration = end_time - start_time
 
-            self.ulog.print_and_logger_info(
-                message=f'\n----Scanned ~{rownum} rows from {filename} in {duration:.2f} seconds.')
+            if duration < 1:
+                self.ulog.print_and_logger_info(message=f'\nScanned ~{rownum} rows from {filename} in {duration:.2f} seconds.')
             return df
 
         except FileNotFoundError:
@@ -121,20 +131,24 @@ class UmlsReader:
         """
         Provides an estimate of the scan time of a UMLS file.
         The tqdm progress bar does not work with Polar's scan_csv function,
-        because scan_csv is lazy loading.
+        because scan_csv is lazy loading and works with the entire file at
+        once.
         :param filename: UMLS filename
         """
 
+        # Check whether the file is scanned or read.
         scanfiles = self.cfg.get_section(section='scanestimates')
-
+        message = ''
         if filename.lower() in scanfiles.keys():
 
+            # Provide an estimate, based on the developer machine.
             scanos = self.cfg.get_value(section='scanestimates', key='os')
             scanmemory = self.cfg.get_value(section='scanestimates', key='memory')
             scantime = self.cfg.get_value(section='scanestimates', key=filename)
 
             message = f'\nThe historical time to scan the entire {filename} on {scanmemory} RAM {scanos} machine is < {scantime}.'
-            print_color(message=message,colorcode='green')
+
+        return message
 
 
     def _get_clean_file(self, filename: str) -> str:
@@ -156,7 +170,7 @@ class UmlsReader:
         else:
             self.ulog.print_and_logger_info(f'Cleaning file: {dirtyfile}...')
 
-            # Get the total number of lines in the input file
+            # Get the total number of lines in the input file.
             with open(dirtyfile, "r", encoding="utf-8") as infile:
                 total_lines = sum(1 for _ in infile)
 
@@ -193,7 +207,7 @@ class UmlsReader:
         :return: the DataFrame
         """
 
-        # Start a timer.
+        # Start a timer for the scan and collection.
         utimer = UbkgTimer(display_msg=f"Scanning {filename}")
 
         try:
@@ -297,7 +311,7 @@ class UmlsReader:
         # RELA - optional, more specific description (usually delimited)
         # SAB - source of relationship
 
-        df_mrrel = self.get_umls_file(filename='MRREL', cols=colrels, n_rows=1000)
+        df_mrrel = self.get_umls_file(filename='MRREL', cols=colrels)
         # Get the relationship label--the value of RELA if not null else
         # the value of REL.
         df_mrrel = df_mrrel.with_columns(
@@ -374,7 +388,7 @@ class UmlsReader:
         df_mrdef = self.get_umls_file(filename='MRDEF', cols=col_def, clean_file=True)
 
         # Join MRDEF data to MRCONSO data.
-        self.ulog.print_and_logger_info('Joining MRCONSO and MRDEF...')
+        utimer = UbkgTimer(display_msg="Joining MRDEF and MRCONSO")
         start_time = time.time()
         df = df_mrconso.join(
             df_mrdef,
@@ -383,9 +397,10 @@ class UmlsReader:
             maintain_order='left'
         )
         elapsed_time = time.time() - start_time
-        self.ulog.print_and_logger_info(
-            f'Join completed in {"{:0>8}".format(str(timedelta(seconds=elapsed_time)))}')
+        utimer.stop()
 
+        utimer = UbkgTimer(display_msg="Standardizing IDs")
+        start_time = time.time()
         # Create standardized codeid.
         # Apply the transformations in steps.
         # Step 1: Create `codeid` column
@@ -401,6 +416,7 @@ class UmlsReader:
         df = df.with_columns(
             standardize_term(term_col='STR')
         )
+        utimer.stop()
 
         return df
 

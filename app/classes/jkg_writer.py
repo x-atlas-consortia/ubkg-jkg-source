@@ -48,10 +48,10 @@ class JkgWriter:
         self.ureader = UmlsReader(cfg=cfg, ulog=ulog)
 
         # Build and write the nodes list.
-        # self._write_nodes_list()
+        self._write_nodes_list()
 
         # Build and write the rels list.
-        self._write_rels_list()
+        #self._write_rels_list()
 
     def _write_nodes_list(self):
         """
