@@ -18,6 +18,8 @@ from app.classes.ubkg_logging import UbkgLogging
 from app.classes.umls_reader import UmlsReader
 # Class that writes to JSON output
 from app.classes.json_writer import JsonWriter
+# Timer for Polars lazy event processing
+from app.classes.ubkg_timer import UbkgTimer
 
 class JkgWriter:
 
@@ -51,7 +53,7 @@ class JkgWriter:
         self._write_nodes_list()
 
         # Build and write the rels list.
-        #self._write_rels_list()
+        self._write_rels_list()
 
     def _write_nodes_list(self):
         """
@@ -99,7 +101,7 @@ class JkgWriter:
                        {"labels": ["Source"],
                         "properties": {"id": "UMLS:NDC", "name": "National Drug Codes", "sab": "NDC"}}]
 
-        for row in tqdm(rows, desc="Building Source nodes"):
+        for row in tqdm(rows, desc="Building Source nodes", colour="white"):
             dict_node = {
                 "labels": ["Source"],
                 "properties": {
@@ -132,7 +134,7 @@ class JkgWriter:
         rows = df.to_dicts()
 
         # Build JSON output row by row.
-        for row in tqdm(rows, desc="Building Semantic Network Node_Label nodes"):
+        for row in tqdm(rows, desc="Building Semantic Network Node_Label nodes", colour="white"):
             dict_node = {
                 "labels": ["Node_Label"],
                 "properties": {
@@ -160,7 +162,7 @@ class JkgWriter:
         # Convert the columnar Polars DataFrame to dicts for row-level processing.
         rows = df.to_dicts()
 
-        for row in tqdm(rows, desc="Building Rel_Label nodes from concept-concept relationships"):
+        for row in tqdm(rows, desc="Building Rel_Label nodes from concept-concept relationships", colour="white"):
             dict_node = {
                 "labels": ["Rel_Label"],
                 "properties": {
@@ -227,7 +229,7 @@ class JkgWriter:
 
         rows = df.to_dicts()
 
-        for row in tqdm(rows, desc="Building Concept nodes"):
+        for row in tqdm(rows, desc="Building Concept nodes", colour="white"):
             dict_node = {
                 "labels": row["labels"],
                 "properties": {
@@ -251,7 +253,7 @@ class JkgWriter:
 
         rows = df.to_dicts()
 
-        for row in tqdm(rows, desc="Building Term nodes"):
+        for row in tqdm(rows, desc="Building Term nodes", colour="white"):
 
             dict_node = {
                 "labels": ["Term"],
@@ -274,12 +276,11 @@ class JkgWriter:
         # 3. Concept-code relationships
         # 4. Add maps of NDC codes to CUIs to rels
 
-        #list_rels = (self._get_semantic_rel_list() +
-                     #self._get_concept_concept_rel_list())
+        list_rels = (self._get_semantic_rel_list() +
+                     self._get_concept_concept_rel_list() +
+                     self._get_ndc_code_rel_list())
 
-        list_rels = self._get_concept_code_rel_list()
-
-        self.json_writer.write_list(list_content=list_rels, keyname='rels', mode='w')
+        self.json_writer.write_list(list_content=list_rels, keyname='rels', mode='a')
 
         return list_rels
 
@@ -309,7 +310,7 @@ class JkgWriter:
                      maintain_order='left').sort(['UI','UI3'])
 
         rows = df.to_dicts()
-        for row in tqdm(rows, desc="Building semantic rels array"):
+        for row in tqdm(rows, desc="Building semantic rels array", colour="white"):
             dict_rel = {
                 "label": "isa",
                 "end": {
@@ -342,7 +343,7 @@ class JkgWriter:
         df = self.ureader.df_concept_concept_rels
 
         rows = df.to_dicts()
-        for row in tqdm(rows, desc="Building concept-concept rels array"):
+        for row in tqdm(rows, desc="Building concept-concept rels array", colour="white"):
 
             # In the concept-concept relationship DataFrame,
             # CUI2 identifies the start concept and CUI1 identifies
@@ -379,7 +380,7 @@ class JkgWriter:
         df = self.ureader.df_concept_code_rels
 
         rows = df.to_dicts()
-        for row in tqdm(rows, desc="Building concept-code rels array"):
+        for row in tqdm(rows, desc="Building concept-code rels array", colour="white"):
             # In the concept-code relationship DataFrame,
             # CUI identifies the start concept and
             # CODE identifies the end concept of the relationship.
@@ -406,5 +407,82 @@ class JkgWriter:
             list_rels.append(dict_rel)
 
         return list_rels
+
+    def _get_ndc_code_rel_list(self) -> list:
+        """
+        Builds the list of CODE rel nodes for generic NDC codes in the JKG.JSON.
+
+        The NDC vocabulary is not structured as a separate vocabulary
+        in the UMLS; instead, NDC codes are attributes of codes in
+        RXNORM. (The RXNav application shows the relationships between
+        NDC packaging codes and RXNORM codes.)
+
+        This function converts the attribute mapping into sets of
+        NDC codes that share RXNORM CUIs, limiting to generic NDC codes.
+
+        """
+
+        listrels = []
+
+        # Obtain non-suppressed attribute values from MRSAT.
+        colsat = ['CODE', # code in vocabulary
+                   'SAB', # source vocbulary (RSAB or VSAB)
+                   'ATV', # attribute value
+                   'ATN' # attribute name
+                  ]
+
+        # MRSAT contains strings with double quotes, so use a cleaned version.
+        df = self.ureader.get_umls_file(filename='MRSAT', cols=colsat, clean_file=True)
+
+        utimer = UbkgTimer(display_msg="Processing for NDC codes")
+
+        # Filter to NDC attributes of RXNORM codes.
+        df = (df.filter(pl.col('SAB') == 'RXNORM')
+              .filter(pl.col('ATN') == 'NDC'))
+
+        df = df.with_columns((pl.col('SAB')+':'+pl.col('CODE')).alias('codeid'))
+        df = df.with_columns((pl.lit('NDC:') + pl.col('ATV')).alias('ndcid'))
+
+
+        # Join against the DataFrame of concept-code relationships to
+        # get information on NDC concepts.
+        # Filter out term types of:
+        # SY - synonym
+        # PSN - prescribable names
+        # TMSY - Tall Man synonym
+        df = ((self.ureader.df_concept_code_rels.join(
+            df,
+            how = 'inner',
+            on='codeid'
+        ).filter(pl.col('TTY') != 'SY')
+               .filter(pl.col('TTY') != 'PSN'))
+              .filter(pl.col('TTY') != 'TMSY'))
+
+        utimer.stop()
+
+        rows = df.to_dicts()
+        for row in tqdm(rows, desc="Building NDC code rels array", colour="white"):
+            dict_rel = {
+                "label": "CODE",
+                "end": {
+                    "properties": {
+                        "id": row["STR"]
+                    }
+                },
+                "properties": {
+                    "sab": "NDC",
+                    "tty": row["TTY"],
+                    "codeid": row["codeid"]
+                },
+                "start": {
+                    "properties": {
+                        "id": f"UMLS:{row["CUI"]}"
+                    }
+                }
+            }
+            listrels.append(dict_rel)
+
+        return listrels
+
 
 

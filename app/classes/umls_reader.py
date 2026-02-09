@@ -16,7 +16,7 @@ from tqdm import tqdm
 from app.classes.ubkg_config import UbkgConfigParser
 # Centralized logging class
 from app.classes.ubkg_logging import UbkgLogging
-# Timer for lazy events
+# Timer for Polars lazy event processing
 from app.classes.ubkg_timer import UbkgTimer
 
 # Functions to standardize codes and terms from vocabularies
@@ -35,7 +35,7 @@ class UmlsReader:
         # both the nodes and the rels arrays in JKG.JSON.
 
         # Concept-concept relationships
-        self.df_concept_concept_rels = self._get_concept_concept_rels()
+        #self.df_concept_concept_rels = self._get_concept_concept_rels()
 
         # Concept-code relationships
         self.df_concept_code_rels = self._get_concept_code_rels()
@@ -145,8 +145,8 @@ class UmlsReader:
             scanos = self.cfg.get_value(section='scanestimates', key='os')
             scanmemory = self.cfg.get_value(section='scanestimates', key='memory')
             scantime = self.cfg.get_value(section='scanestimates', key=filename)
-
-            message = f'\nThe historical time to scan the entire {filename} on {scanmemory} RAM {scanos} machine is < {scantime}.'
+            if int(scantime) > 1:
+                message = f'\nThe historical time to scan the entire {filename} on {scanmemory} RAM {scanos} machine is < {scantime} seconds.'
 
         return message
 
@@ -166,7 +166,7 @@ class UmlsReader:
 
         if os.path.exists(cleanfile):
             self.ulog.print_and_logger_warning(
-                f'Using existing cleaned file {cleanfile}. Delete this file to force pre-processing.')
+                f'\nUsing existing cleaned file {cleanfile}. Delete this file to force pre-processing.')
         else:
             self.ulog.print_and_logger_info(f'Cleaning file: {dirtyfile}...')
 
@@ -176,7 +176,7 @@ class UmlsReader:
 
             # Process the file with tqdm progress bar.
             with open(dirtyfile, "r", encoding="utf-8") as infile, open(cleanfile, "w", encoding="utf-8") as outfile:
-                with tqdm(total=total_lines, desc="Cleaning") as pbar:
+                with tqdm(total=total_lines, desc="Cleaning", colour="white") as pbar:
                     for line in infile:
                         # Replace improperly escaped quotes.
                         fixed_line = line.replace('"', '')
@@ -388,7 +388,7 @@ class UmlsReader:
         df_mrdef = self.get_umls_file(filename='MRDEF', cols=col_def, clean_file=True)
 
         # Join MRDEF data to MRCONSO data.
-        utimer = UbkgTimer(display_msg="Joining MRDEF and MRCONSO")
+        #utimer = UbkgTimer(display_msg="Joining MRDEF and MRCONSO")
         start_time = time.time()
         df = df_mrconso.join(
             df_mrdef,
@@ -397,7 +397,7 @@ class UmlsReader:
             maintain_order='left'
         )
         elapsed_time = time.time() - start_time
-        utimer.stop()
+        #utimer.stop()
 
         utimer = UbkgTimer(display_msg="Standardizing IDs")
         start_time = time.time()

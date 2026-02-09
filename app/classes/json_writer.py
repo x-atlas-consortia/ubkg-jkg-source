@@ -26,12 +26,12 @@ class JsonWriter:
         # Indentation if pretty printing
         self.indent = indent
 
-    def write_list(self, list_content: list, keyname: str, mode: str):
+    def write_list(self, list_content: list, keyname: str, mode:str = "a"):
         """
         Writes a list to the JSON file as the value of a key, using
         a TQDM progress bar.
         :param keyname: name of the key for which the list is the value
-        :param mode: w (write) or a (append)
+        :param mode: w (write) or a (append, default)
         :param list_content: list to write
 
         The use case is: write {"keyname":[list of elements]}
