@@ -20,7 +20,7 @@ MRSAT.RRF (concept attributes)
 
 From the Semantic Network:
 SRDEF (semantic type descriptions from the Semantic Network)
-SRSTRE1 (Fully inherited set of Relations (UI's)
+SRSTRE1 (fully inherited set of Relations (UI's))
 
 """
 

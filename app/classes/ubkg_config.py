@@ -8,7 +8,7 @@ import configparser
 import os
 
 # Centralized logging class
-from app.classes.ubkg_logging import UbkgLogging
+from classes.ubkg_logging import UbkgLogging
 
 class UbkgConfigParser:
 

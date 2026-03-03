@@ -25,7 +25,7 @@ class UbkgTimer:
         self.refresh_interval = refresh_interval
 
         # Start a tqdm timer that will update the timer display.
-        self.pbar = tqdm(total=0, bar_format="{desc} {postfix}", desc=f"{display_msg}", leave=True)
+        self.pbar = tqdm(total=0, bar_format="{desc}{postfix}", desc=f"{display_msg}", leave=True)
 
         self.thread = threading.Thread(target=self._timer_loop, daemon=True)
         self.thread.start()

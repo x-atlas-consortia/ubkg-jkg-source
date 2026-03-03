@@ -13,16 +13,16 @@ import polars as pl
 from tqdm import tqdm
 
 # Configuration file class
-from app.classes.ubkg_config import UbkgConfigParser
+from classes.ubkg_config import UbkgConfigParser
 # Centralized logging class
-from app.classes.ubkg_logging import UbkgLogging
+from classes.ubkg_logging import UbkgLogging
 # Timer for Polars lazy event processing
-from app.classes.ubkg_timer import UbkgTimer
+from classes.ubkg_timer import UbkgTimer
 
 # Functions to standardize codes and terms from vocabularies
-from app.utilities.ubkg_standardize import create_codeid, standardize_codeid, standardize_term
+from utilities.ubkg_standardize import create_codeid, standardize_codeid, standardize_term
 # color printing
-from app.utilities.print_color import print_color
+from utilities.print_color import print_color
 
 class UmlsReader:
 
@@ -31,11 +31,16 @@ class UmlsReader:
         self.cfg = cfg
         self.ulog = ulog
 
+        umls_dir = cfg.get_value(section='directories', key='umls_dir')
+        if not os.path.exists(umls_dir):
+            self.ulog.print_and_logger_info(f'UMLS source directory {umls_dir} not found')
+            exit(1)
+
         # Build Dataframes that will be used to build elements in
         # both the nodes and the rels arrays in JKG.JSON.
 
         # Concept-concept relationships
-        #self.df_concept_concept_rels = self._get_concept_concept_rels()
+        self.df_concept_concept_rels = self._get_concept_concept_rels()
 
         # Concept-code relationships
         self.df_concept_code_rels = self._get_concept_code_rels()
@@ -58,6 +63,14 @@ class UmlsReader:
         :param cols: columns to return
         :param clean_file: if True the file will be pre-processed to remove double-quoted strings
         """
+
+        # Check configuration for a non-zero number of rows to fetch
+        # for uses such as debugging.
+        debug_n_rows = int(self.cfg.get_value(section='debug', key='debug_n_rows'))
+        if debug_n_rows > 0:
+            msg = f'DEBUG: Reading only {debug_n_rows} rows from {filename}.'
+            print_color(message=msg, colorcode='red')
+            n_rows = debug_n_rows
 
         # The Semantic Network definitions files and Metathesaurus files
         # are located in separate directories.
@@ -212,11 +225,13 @@ class UmlsReader:
 
         try:
             # Scan file.
-            lf = pl.scan_csv(filename,
+            lf = (pl.scan_csv(filename,
                              separator=separator,
                              has_header=False,
                              new_columns=new_columns,
-                             n_rows=n_rows).unique()
+                             n_rows=n_rows)
+                  .fill_null("") # replace nulls with blank strings
+                  .unique()) # drop duplicates
 
             # Optional filtering.
             if checksuppress:
@@ -388,16 +403,15 @@ class UmlsReader:
         df_mrdef = self.get_umls_file(filename='MRDEF', cols=col_def, clean_file=True)
 
         # Join MRDEF data to MRCONSO data.
-        #utimer = UbkgTimer(display_msg="Joining MRDEF and MRCONSO")
+        utimer = UbkgTimer(display_msg="Joining MRDEF and MRCONSO")
         start_time = time.time()
         df = df_mrconso.join(
             df_mrdef,
             how='left',
             on='AUI',
             maintain_order='left'
-        )
-        elapsed_time = time.time() - start_time
-        #utimer.stop()
+        ).fill_null('')
+        utimer.stop()
 
         utimer = UbkgTimer(display_msg="Standardizing IDs")
         start_time = time.time()
@@ -435,5 +449,25 @@ class UmlsReader:
         df = self.get_umls_file(filename='SRDEF', cols=colsem).unique()
 
         return df
+
+    def get_umls_version(self) -> str:
+        """
+        Obtains the UMLS version from the release.dat file
+        :return:
+        """
+
+        # The release.dat file should be in the META path of the MetamorphoSys output.
+        umls_dir = self.cfg.get_value(section='directories', key='umls_dir')
+        rel_file = os.path.join(umls_dir, 'META', 'release.dat')
+
+        try:
+            with open(rel_file, 'r') as f:
+                lines = f.readlines()
+                for l in lines:
+                    if 'umls.release.name' in l:
+                        return l.split('=')[1].strip()
+        except FileNotFoundError:
+            return ""
+
 
 

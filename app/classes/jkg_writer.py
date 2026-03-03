@@ -11,15 +11,15 @@ import polars as pl
 from tqdm import tqdm
 
 # Configuration file class
-from app.classes.ubkg_config import UbkgConfigParser
+from classes.ubkg_config import UbkgConfigParser
 # Centralized logging class
-from app.classes.ubkg_logging import UbkgLogging
+from classes.ubkg_logging import UbkgLogging
 # Class that reads and prepares data from UMLS flat files
-from app.classes.umls_reader import UmlsReader
+from classes.umls_reader import UmlsReader
 # Class that writes to JSON output
-from app.classes.json_writer import JsonWriter
+from classes.json_writer import JsonWriter
 # Timer for Polars lazy event processing
-from app.classes.ubkg_timer import UbkgTimer
+from classes.ubkg_timer import UbkgTimer
 
 class JkgWriter:
 
@@ -49,26 +49,79 @@ class JkgWriter:
         # when they are needed.
         self.ureader = UmlsReader(cfg=cfg, ulog=ulog)
 
+        # Start
+        self.json_writer.start_json()
+
         # Build and write the nodes list.
         self._write_nodes_list()
 
+        # Comma
+        self.json_writer.write_comma()
+        self.json_writer.write_line_feed()
+
         # Build and write the rels list.
         self._write_rels_list()
+
+        # End
+        self.json_writer.end_json()
+
+    def _get_progress_label(self, label_key:str) -> str:
+        """
+        Labels used in progress indicators, obtained from configuration.
+
+        """
+        label = self.cfg.get_value(section='progress_labels', key=label_key)
+
+        if 'node' in label_key:
+            return f'{label} nodes'
+        else:
+            return f'{label} rels'
 
     def _write_nodes_list(self):
         """
         Builds and writes the nodes list of the JKG file.
 
         """
+        self.json_writer.start_list(keyname="nodes")
 
-        list_nodes= (self._get_source_node_list() +
-                     self._get_semantic_node_label_list() +
-                     self._get_rel_label_list() +
-                     self._get_concept_nodes_list() +
-                     self._get_term_nodes_list())
+        # Source nodes
+        list_nodes = self._get_source_node_list()
+        list_name=self._get_progress_label("node_source")
+        self.json_writer.write_list(list_name=list_name, list_content=list_nodes)
+        if len(list_nodes) > 0:
+            self.json_writer.write_comma()
+            self.json_writer.write_line_feed()
 
+        # Semantic Network Rel_Label nodes
+        list_nodes = self._get_semantic_node_label_list()
+        list_name = self._get_progress_label("node_semantic_rel")
+        self.json_writer.write_list(list_name=list_name, list_content=list_nodes)
+        if len(list_nodes) > 0:
+            self.json_writer.write_comma()
+            self.json_writer.write_line_feed()
 
-        self.json_writer.write_list(list_content=list_nodes, keyname='nodes', mode='w')
+        # Rel_Label nodes
+        list_nodes = self._get_rel_label_list()
+        list_name = self._get_progress_label("node_rel")
+        self.json_writer.write_list(list_name=list_name, list_content=list_nodes)
+        if len(list_nodes) > 0:
+            self.json_writer.write_comma()
+            self.json_writer.write_line_feed()
+
+        # Concept nodes
+        list_nodes = self._get_concept_nodes_list()
+        list_name = self._get_progress_label("node_concept")
+        self.json_writer.write_list(list_name=list_name, list_content=list_nodes)
+        if len(list_nodes) > 0:
+            self.json_writer.write_comma()
+            self.json_writer.write_line_feed()
+
+        # Term nodes
+        list_nodes = self._get_term_nodes_list()
+        list_name = self._get_progress_label("node_term")
+        self.json_writer.write_list(list_name=list_name, list_content=list_nodes)
+
+        self.json_writer.end_list()
 
     def _get_source_node_list(self) -> list:
         """
@@ -76,12 +129,14 @@ class JkgWriter:
         """
 
         # Obtain sorted current English-language SABs from MRSAB.RRF.
-        colsabs = ['VSAB', 'RSAB', 'SON', 'SRL', 'TTYL']
+        colsabs = ['VSAB', 'RSAB', 'SON', 'SRL', 'TTYL','SVER']
         # VSAB - versioned source
         # RSAB - root source
         # SON - official name of source
-        # SRL - source restriction level - can be used to filter out a licensed SAB
+        # SRL - source restriction level - can be used to filter out a licensed SAB.
+        #       (https://uts.nlm.nih.gov/uts/license/license-category-help.html)
         # TTYL - term types from the SAB
+        # SVER - source-version
         df = self.ureader.get_umls_file(filename='MRSAB', cols=colsabs)
         df = df.sort('RSAB')
 
@@ -92,22 +147,25 @@ class JkgWriter:
         # Start with hard-coded rows for:
         # - the UMLS itself
         # - NDC
-
+        umls_release = self.ureader.get_umls_version()
         listsources = [{"labels": ["Source"],
                         "properties": {"id": "UMLS:UMLS", "name": "Unified Medical Language System",
                                        "description": "United States National Institutes of Health (NIH) National Library of Medicine (NLM) Unified Medical Language System (UMLS) Knowledge Sources.",
                                        "sab": "UMLS",
-                                       "source": "http://www.nlm.nih.gov/research/umls/licensedcontent/umlsknowledgesources.html"}},
+                                       "source": "http://www.nlm.nih.gov/research/umls/licensedcontent/umlsknowledgesources.html"},
+                                       "source_version": umls_release},
                        {"labels": ["Source"],
                         "properties": {"id": "UMLS:NDC", "name": "National Drug Codes", "sab": "NDC"}}]
 
-        for row in tqdm(rows, desc="Building Source nodes", colour="white"):
+        desc = self._get_progress_label("node_source")
+        for row in tqdm(rows, desc=f'Building {desc}'):
             dict_node = {
                 "labels": ["Source"],
                 "properties": {
                     "id": f"UMLS:{row['VSAB']}",
                     "name": row["SON"],
                     "sab": row["RSAB"],
+                    "source_version": row["SVER"],
                     "srl": row["SRL"],
                     "ttyl": row["TTYL"].split(",") if row["TTYL"] else []  # Convert TTYL to a list or an empty list
                 }
@@ -134,7 +192,8 @@ class JkgWriter:
         rows = df.to_dicts()
 
         # Build JSON output row by row.
-        for row in tqdm(rows, desc="Building Semantic Network Node_Label nodes", colour="white"):
+        desc = self._get_progress_label("node_semantic_rel")
+        for row in tqdm(rows, desc=f'Building {desc}'):
             dict_node = {
                 "labels": ["Node_Label"],
                 "properties": {
@@ -162,7 +221,20 @@ class JkgWriter:
         # Convert the columnar Polars DataFrame to dicts for row-level processing.
         rows = df.to_dicts()
 
-        for row in tqdm(rows, desc="Building Rel_Label nodes from concept-concept relationships", colour="white"):
+        # Manually add the Rel_Label for CODE, between concepts and codes.
+        dict_node = {
+            "labels": ["Rel_Label"],
+            "properties": {
+                "id": "UBKG:CODE",
+                "def": "relationship between a UBKG Concept and a Code in a SAB",
+                "rel_label": "CODE",
+                "sab": "UBKG"
+            }
+        }
+        list_nodes.append(dict_node)
+
+        desc = self._get_progress_label("node_rel")
+        for row in tqdm(rows, desc=f'Building {desc}'):
             dict_node = {
                 "labels": ["Rel_Label"],
                 "properties": {
@@ -229,15 +301,17 @@ class JkgWriter:
 
         rows = df.to_dicts()
 
-        for row in tqdm(rows, desc="Building Concept nodes", colour="white"):
-            dict_node = {
-                "labels": row["labels"],
-                "properties": {
-                    "id": f"UMLS:{row["CUI"]}",
-                    "pref_term": row["STR"],
-                    "sab": "UMLS"}
-            }
-            list_nodes.append(dict_node)
+        desc = self._get_progress_label("node_concept")
+        for row in tqdm(rows, desc=f'Building {desc}'):
+           dict_node = {
+               "labels": row["labels"],
+               "properties": {
+                   "id": f"UMLS:{row['CUI']}",
+                   "pref_term": row["STR"],
+                   "sab": "UMLS"
+               }
+           }
+           list_nodes.append(dict_node)
 
         return list_nodes
 
@@ -253,7 +327,8 @@ class JkgWriter:
 
         rows = df.to_dicts()
 
-        for row in tqdm(rows, desc="Building Term nodes", colour="white"):
+        desc = self._get_progress_label("node_term")
+        for row in tqdm(rows, desc=f'Building {desc}'):
 
             dict_node = {
                 "labels": ["Term"],
@@ -267,7 +342,7 @@ class JkgWriter:
 
     def _write_rels_list(self):
         """
-        Builds the list of relations array of the JKG.JSON.
+        Builds and writes the rels array of the JKG.JSON.
 
         """
         # Build rels array:
@@ -276,13 +351,38 @@ class JkgWriter:
         # 3. Concept-code relationships
         # 4. Add maps of NDC codes to CUIs to rels
 
-        list_rels = (self._get_semantic_rel_list() +
-                     self._get_concept_concept_rel_list() +
-                     self._get_ndc_code_rel_list())
+        self.json_writer.start_list(keyname="rels")
 
-        self.json_writer.write_list(list_content=list_rels, keyname='rels', mode='a')
+        # Semantic Network rels
+        list_rels = self._get_semantic_rel_list()
+        list_name = self._get_progress_label("rel_semantic")
+        self.json_writer.write_list(list_name=list_name, list_content=list_rels)
+        if len(list_rels) > 0:
+            self.json_writer.write_comma()
+            self.json_writer.write_line_feed()
 
-        return list_rels
+        # Concept-concept rels
+        list_rels = self._get_concept_concept_rel_list()
+        list_name = self._get_progress_label("rel_concept_concept")
+        self.json_writer.write_list(list_name=list_name, list_content=list_rels)
+        if len(list_rels) > 0:
+            self.json_writer.write_comma()
+            self.json_writer.write_line_feed()
+
+        # Concept-code rels
+        list_rels = self._get_concept_code_rel_list()
+        list_name = self._get_progress_label("rel_concept_code")
+        self.json_writer.write_list(list_name=list_name, list_content=list_rels)
+        if len(list_rels) > 0:
+            self.json_writer.write_comma()
+            self.json_writer.write_line_feed()
+
+        # NDC code rels
+        list_rels = self._get_ndc_code_rel_list()
+        list_name = self._get_progress_label("rel_ndc")
+        self.json_writer.write_list(list_name=list_name, list_content=list_rels)
+
+        self.json_writer.end_list()
 
     def _get_semantic_rel_list(self) -> list:
         """
@@ -310,12 +410,14 @@ class JkgWriter:
                      maintain_order='left').sort(['UI','UI3'])
 
         rows = df.to_dicts()
-        for row in tqdm(rows, desc="Building semantic rels array", colour="white"):
+
+        desc = self._get_progress_label("rel_semantic")
+        for row in tqdm(rows, desc=f'Building {desc}'):
             dict_rel = {
                 "label": "isa",
                 "end": {
                     "properties" : {
-                        "id": f"UMLS:{row["UI3"]}"
+                        "id": f"UMLS:{row['UI3']}"
                     }
                 },
                 "properties":{
@@ -323,11 +425,10 @@ class JkgWriter:
                 },
                 "start": {
                     "properties" : {
-                        "id": f"UMLS:{row["UI"]}"
+                        "id": f"UMLS:{row['UI']}"
                     }
                 }
             }
-
             list_rels.append(dict_rel)
 
         return list_rels
@@ -343,7 +444,9 @@ class JkgWriter:
         df = self.ureader.df_concept_concept_rels
 
         rows = df.to_dicts()
-        for row in tqdm(rows, desc="Building concept-concept rels array", colour="white"):
+
+        desc = self._get_progress_label("rel_concept_concept")
+        for row in tqdm(rows, desc=f'Building {desc}'):
 
             # In the concept-concept relationship DataFrame,
             # CUI2 identifies the start concept and CUI1 identifies
@@ -352,7 +455,7 @@ class JkgWriter:
                 "label": f"{row["rel_label"]}",
                 "end": {
                     "properties" : {
-                        "id": f"UMLS:{row["CUI1"]}"
+                        "id": f"UMLS:{row['CUI1']}"
                     }
                 },
                 "properties":{
@@ -360,7 +463,7 @@ class JkgWriter:
                 },
                 "start": {
                     "properties" : {
-                        "id": f"UMLS:{row["CUI2"]}"
+                        "id": f"UMLS:{row['CUI2']}"
                     }
                 }
             }
@@ -380,7 +483,9 @@ class JkgWriter:
         df = self.ureader.df_concept_code_rels
 
         rows = df.to_dicts()
-        for row in tqdm(rows, desc="Building concept-code rels array", colour="white"):
+
+        desc = self._get_progress_label("rel_concept_code")
+        for row in tqdm(rows, desc=f'Building {desc}'):
             # In the concept-code relationship DataFrame,
             # CUI identifies the start concept and
             # CODE identifies the end concept of the relationship.
@@ -399,7 +504,7 @@ class JkgWriter:
                 },
                 "start": {
                     "properties": {
-                        "id": f"UMLS:{row["CUI"]}"
+                        "id": f"UMLS:{row['CUI']}"
                     }
                 }
             }
@@ -461,7 +566,8 @@ class JkgWriter:
         utimer.stop()
 
         rows = df.to_dicts()
-        for row in tqdm(rows, desc="Building NDC code rels array", colour="white"):
+        desc = self._get_progress_label("rel_ndc")
+        for row in tqdm(rows, desc=f'Building {desc}'):
             dict_rel = {
                 "label": "CODE",
                 "end": {
@@ -476,7 +582,7 @@ class JkgWriter:
                 },
                 "start": {
                     "properties": {
-                        "id": f"UMLS:{row["CUI"]}"
+                        "id": f"UMLS:{row['CUI']}"
                     }
                 }
             }
