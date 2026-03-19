@@ -269,7 +269,7 @@ class JkgWriter:
             df.group_by("CUI", maintain_order=True)
             .agg(pl.col("STY"))
             .with_columns((pl.concat_list(pl.lit("Concept"), "STY")).alias("labels"))
-        )
+        ).unique()
 
         return dfsty
 
