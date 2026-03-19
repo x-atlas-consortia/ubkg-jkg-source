@@ -289,8 +289,10 @@ class JkgWriter:
         #   -- the Term Status is "P" (Preferred LUI of the CUI)
         df = (df.filter(pl.col('ISPREF') == 'Y')
               .filter(pl.col('STT') == 'PF')
-              .filter(pl.col('TS') == 'P')
-              .unique())
+              .filter(pl.col('TS') == 'P'))
+
+        # Drop duplicates
+        df = df.unique(subset='CUI')
 
         # Obtain sorted list of concept labels for each concept.
         dflabels = self._get_concept_labels_list()
