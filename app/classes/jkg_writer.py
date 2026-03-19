@@ -295,9 +295,10 @@ class JkgWriter:
         # Obtain sorted list of concept labels for each concept.
         dflabels = self._get_concept_labels_list()
 
-        df = df.join(dflabels,
+        df = (df.join(dflabels,
                      how='inner',
                      on='CUI')
+              .unique())
 
         rows = df.to_dicts()
 
