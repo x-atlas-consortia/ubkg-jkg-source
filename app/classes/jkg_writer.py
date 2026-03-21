@@ -376,14 +376,14 @@ class JkgWriter:
         list_rels = self._get_concept_code_rel_list()
         list_name = self._get_progress_label("rel_concept_code")
         self.json_writer.write_list(list_name=list_name, list_content=list_rels)
-        if len(list_rels) > 0:
-            self.json_writer.write_comma()
-            self.json_writer.write_line_feed()
 
         # NDC code rels
         list_rels = self._get_ndc_code_rel_list()
         list_name = self._get_progress_label("rel_ndc")
-        self.json_writer.write_list(list_name=list_name, list_content=list_rels)
+        if len(list_rels) > 0:
+            self.json_writer.write_comma()
+            self.json_writer.write_line_feed()
+            self.json_writer.write_list(list_name=list_name, list_content=list_rels)
 
         self.json_writer.end_list()
 

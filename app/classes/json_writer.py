@@ -86,26 +86,24 @@ class JsonWriter:
 
             for i, node in enumerate(tqdm(list_content, desc=f"Writing {list_name}...", total=len(list_content))):
 
-                if i:
-                    # Line feed at the start of each node.
-                    f.write(",\n")
-
                 # Produce node JSON either as pretty (multi-line) or minimal (one-line, with minimal indentation)
                 if isinstance(node, str):
-                    node_json = node.strip()
+                    node_indented = node.strip()
                 else:
                     if self.write_pretty:
                         # Pretty-print the node.
                         node_json = json.dumps(node, ensure_ascii=False, indent=self.indent_spaces)
                         node_indented = textwrap.indent(node_json, self.node_indent)
-
                     else:
                         # Use minimal separator spacing, with a small indent.
                         node_json = json.dumps(node, ensure_ascii=False, separators=(',', ':'))
                         node_indented = self.node_indent + node_json
 
-                    f.write(node_indented)
+                # Write comma+newline before each node except the first
+                if i:
+                    f.write(",\n")
 
+                f.write(node_indented)
 
     def write_line_feed(self):
         """
