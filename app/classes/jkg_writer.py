@@ -225,9 +225,9 @@ class JkgWriter:
         dict_node = {
             "labels": ["Rel_Label"],
             "properties": {
-                "id": "UBKG:CODE",
+                "id": "UBKG:code",
                 "def": "relationship between a UBKG Concept and a Code in a SAB",
-                "rel_label": "CODE",
+                "rel_label": "code",
                 "sab": "UBKG"
             }
         }
@@ -496,14 +496,14 @@ class JkgWriter:
                 "label": "CODE",
                 "end": {
                     "properties": {
-                        "id": row["STR"],
-                        "def": row["DEF"],
-                        "tty": row["TTY"],
-                        "codeid": row["codeid"]
+                        "id": row["STR"]
                     }
                 },
                 "properties": {
-                    "sab": row["SAB"]
+                    "sab": row["SAB"],
+                    "def": row["DEF"],
+                    "tty": row["TTY"],
+                    "codeid": row["codeid"]
                 },
                 "start": {
                     "properties": {
