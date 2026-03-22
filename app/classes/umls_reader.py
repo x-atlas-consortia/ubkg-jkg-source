@@ -447,6 +447,8 @@ class UmlsReader:
         # STY_RL - name of the semantic relation
         # DEF - definition
         df = self.get_umls_file(filename='SRDEF', cols=colsem).unique()
+        # Filter to those nodes for which the Relationship Type is "Semantic Type"
+        df = df.filter(pl.col('RT') == 'STY')
 
         return df
 

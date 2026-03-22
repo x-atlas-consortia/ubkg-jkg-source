@@ -186,7 +186,7 @@ class JkgWriter:
         # Obtain the common semantic definitions dataset built by the
         # UmlsReader object at its initialization.
         df = self.ureader.df_semantic_definitions
-        df = df.filter(pl.col('RT') == 'STY')
+        #df = df.filter(pl.col('RT') == 'STY')
 
         # Convert to a list of dictionaries for row-wise processing
         rows = df.to_dicts()
