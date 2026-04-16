@@ -44,6 +44,6 @@ if ! (pip show python-json-logger > /dev/null); then
     pip install python-json-logger
 fi
 
-echo "Running ingest_sab.py in venv..."p
+echo "Running ingest_sab.py in venv"
 python umls2jkg.py "$@"
 

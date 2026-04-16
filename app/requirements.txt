@@ -3,3 +3,12 @@ python-json-logger==4.0.0
 
 polars==1.37.1
 tqdm==4.67.2
+
+# API calls
+requests~=2.32.5
+
+# for analysis of tabular data
+pandas==2.3.0
+numpy==2.1.0
+# For downloading from Google Drive
+gdown==5.2.1

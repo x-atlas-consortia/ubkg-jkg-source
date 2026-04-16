@@ -7,6 +7,7 @@ JSON Knowledge Graph (JKG) schema.
 
 import os
 
+
 import polars as pl
 from tqdm import tqdm
 
@@ -20,6 +21,7 @@ from classes.umls_reader import UmlsReader
 from classes.json_writer import JsonWriter
 # Timer for Polars lazy event processing
 from classes.ubkg_timer import UbkgTimer
+from classes.refseq import Refseqapi
 
 class JkgWriter:
 
@@ -480,6 +482,7 @@ class JkgWriter:
         Builds the list of concept-code rels array of the JKG.JSON.
         """
         list_rels = []
+        refseqapi = Refseqapi(ulog=self.ulog)
 
         # Obtain the common concept-code relationship dataset built by the
         # UmlsReader object at its initialization.
@@ -487,11 +490,21 @@ class JkgWriter:
 
         rows = df.to_dicts()
 
+        # Step 1: Collect all unique HGNC IDs upfront
+        hgnc_ids = list({row["codeid"] for row in rows if row["SAB"] == "HGNC"})
+
+        # Step 2: Fetch definitions for all HGNC IDs (with rate limiting inside get_gene_definition)
+        self.ulog.print_and_logger_info(f'Fetching {len(hgnc_ids)} HGNC gene definitions from NCBI...')
+        hgnc_def_map: dict = {}
+        for hgnc_id in tqdm(hgnc_ids, desc='Fetching HGNC definitions'):
+            hgnc_def_map[hgnc_id] = refseqapi.get_gene_definition(hgnc_id)
+
+        # Step 3: Build the list of rels using the prefetched definitions
         desc = self._get_progress_label("rel_concept_code")
         for row in tqdm(rows, desc=f'Building {desc}'):
-            # In the concept-code relationship DataFrame,
-            # CUI identifies the start concept and
-            # CODE identifies the end concept of the relationship.
+            if row["SAB"] == "HGNC":
+                row["DEF"] = hgnc_def_map.get(row["codeid"], "")
+
             dict_rel = {
                 "label": "CODE",
                 "end": {

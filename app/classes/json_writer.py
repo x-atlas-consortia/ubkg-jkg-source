@@ -15,6 +15,7 @@ be significant for the two format options.
 import json
 import textwrap
 from tqdm import tqdm
+from .refseq import Refseqapi
 
 class JsonWriter:
 
