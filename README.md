@@ -173,6 +173,22 @@ Because Polars cannot scan files with these characters, it is necessary to remov
 
 **umls2jkg** looks for cleaned versions of these files in the output directory. If a file is not present, the application creates a cleaned version of the file.
 
+## Standardized relationship label format
+The [neo4 naming rules](https://neo4j.com/docs/cypher-manual/current/syntax/naming/) specify that relationship names:
+1. Contain only alphanumeric characters or the underscore.
+2. Start with a alphabetic character.
+
+Although a relationship can include special characters or start with a number, Cypher queries that refer 
+to the relationship must escape the relationship name with backticks. To avoid the need
+for backticks, relationships in the UBKG are reformatted as follows:
+
+| Characters                        | Change                    | Example                      |
+|-----------------------------------|---------------------------|------------------------------|
+| hyphen                            | replaced with underscore  | **abc-def** to **abc_def**   |
+| other non-alphanumeric characters | replaced with underscores | **abc (def)** to **abc_def** |
+| leading numeric character         | preceded with 'REL_'      | **1abc** to **REL_1abc**     |
+
+
 ## Historical processing times
 The following times were for the processing of the full 2025AB release, on a MacOs machine with 32GB RAM and no other processes competing for resources.
 
