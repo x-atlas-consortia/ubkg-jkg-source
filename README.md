@@ -33,7 +33,6 @@ The JKG schema consists of two types of arrays:
 Applications in this repository convert source data obtained from the UMLS to a JSON file that
 conforms to the JKG schema.
 
-
 #### Components
 1. **umls2jkg.py**:  Python application that:
    - reads UMLS data files
@@ -42,7 +41,6 @@ conforms to the JKG schema.
 2. **umls2jkg.sh**:  Shell script that:
    - establishes a Python virtual environment for the **umls2kg.py** script
    - executes the **umls2kg.py** script
-
 3. **umls2kjg.ini**: configuration file that drives the execution of the **umls2kg.py** script
 
 # Prerequisites
@@ -124,10 +122,11 @@ The **umls2jkg** application was developed in Python 3.13.
 ### Packages
 **umls2jkg** uses the following packages:
 - [Polars](https://pola.rs/) to analyze the extremely large UMLS data files
+- [Pandas](https://pandas.pydata.org/) for analysis of tabular data
 - [tqdm](https://tqdm.github.io/) for progress indicators
 
 # Application workflow
-![img.png](img.png)
+![img_1.png](img_1.png)
 
 The **umls2kg** application reads and combines content from UMLS data files to 
 build elements in the arrays of the JGK JSON file.
@@ -194,6 +193,11 @@ Time to scan, clean, and process files: 11 minutes, 14 seconds.
 | clean MRSAT.RRF   | <01:00       | 9GB       |
 | scan MRSAT.RRF    | <03:00       |           |
 | build rels array  | <05:00       |           |          |
+
+# Gene descriptions
+As part of processing, **umls2jkg** obtains descriptions of genes by querying [RefSeq](https://www.ncbi.nlm.nih.gov/refseq/).
+The script writes gene descriptions to a file named REFSEQ.csv, in the same directory as the **jkg.json** output.
+
 
 # Output
 

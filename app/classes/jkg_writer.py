@@ -23,17 +23,27 @@ from classes.json_writer import JsonWriter
 from classes.ubkg_timer import UbkgTimer
 from classes.refseq import Refseqapi
 
+from classes.ubkg_extract import ubkgExtract
+
 class JkgWriter:
 
     def __init__(self, cfg:UbkgConfigParser, ulog:UbkgLogging):
         self.cfg = cfg
         self.ulog = ulog
+        self.uext = ubkgExtract(ulog=ulog)
 
         # Read configuration file to obtain location of output directory.
         self.output_dir = self.cfg.get_value(section='directories', key='output_dir')
 
         # Make output directory if it does not yet exist.
         os.system(f"mkdir -p {self.output_dir}")
+
+        # HGNC gene definitions from RefSeq
+        refseqapi = Refseqapi(ulog=ulog, cfg=cfg, uext=self.uext)
+        self.gene_summaries = refseqapi.getrefseqsummaries(outdir=self.output_dir,
+                                                      start=1,
+                                                      chunk=200000)
+
 
         # JsonWriter object
         outfile = self.cfg.get_value(section='json_out', key='output_filename')
@@ -42,6 +52,7 @@ class JkgWriter:
         pretty = self.cfg.get_value(section='json_out', key='pretty')
         indent = self.cfg.get_value(section='json_out', key='indent')
         self.json_writer = JsonWriter(outpath=outpath, pretty=pretty, indent=indent)
+
 
         # UMLS reader object
         # During its instantiation, the UmlsReader object will read
@@ -66,6 +77,7 @@ class JkgWriter:
 
         # End
         self.json_writer.end_json()
+
 
     def _get_progress_label(self, label_key:str) -> str:
         """
@@ -438,6 +450,40 @@ class JkgWriter:
 
         return list_rels
 
+    def _reformat_relationship_labels(self, expr: pl.Expr) -> pl.Expr:
+        """
+        Converts a relationship label to a neo4j-compatible format.
+        :param expr: Polars expression for the relationship-label column.
+        :return: Polars expression with transformed labels.
+        """
+
+        """
+        To avoid the need for back-ticking in Cypher queries, replace 
+        reserved characters with underscores.
+        """
+
+        ret = (
+            expr.cast(pl.Utf8)
+            .str.replace_all(".", "_", literal=True)
+            .str.replace_all("-", "_", literal=True)
+            .str.replace_all("(", "_", literal=True)
+            .str.replace_all(")", "_", literal=True)
+            .str.replace_all("[", "_", literal=True)
+            .str.replace_all("]", "_", literal=True)
+            .str.replace_all("{", "_", literal=True)
+            .str.replace_all("}", "_", literal=True)
+            .str.replace_all(":", "_", literal=True)
+            .str.to_lowercase()
+        )
+
+        # Prepend "rel_" to relationships whose labels start with numbers.
+        ret = ((pl.when(ret.str.slice(0, 1).str.contains(r"^\d$"))
+               .then(pl.lit("rel_") + ret))
+               .otherwise(ret))
+
+        return ret
+
+
     def _get_concept_concept_rel_list(self) -> list:
         """
         Builds the list of concept-concept rels array of the JKG.JSON.
@@ -447,6 +493,11 @@ class JkgWriter:
         # Obtain the common concept-concept relationship dataset built by the
         # UmlsReader object at its initialization.
         df = self.ureader.df_concept_concept_rels
+
+        # Format relationship labels for neo4j compatibility.
+        df = df.with_columns(
+            self._reformat_relationship_labels(pl.col("rel_label")).alias("rel_label")
+        )
 
         rows = df.to_dicts()
 
@@ -482,24 +533,21 @@ class JkgWriter:
         Builds the list of concept-code rels array of the JKG.JSON.
         """
         list_rels = []
-        refseqapi = Refseqapi(ulog=self.ulog)
+        refseqapi = Refseqapi(ulog=self.ulog, cfg=self.cfg, uext=self.uext)
 
         # Obtain the common concept-code relationship dataset built by the
         # UmlsReader object at its initialization.
         df = self.ureader.df_concept_code_rels
 
+        # Build HGNC_ID -> definition lookup dict once before the loop
+        #hgnc_def_map: dict = self.gene_summaries.set_index('HGNC_ID')['definition'].to_dict()
+        hgnc_def_map: dict = {f"HGNC:{k}": v for k, v in
+                              self.gene_summaries.set_index('Entrez')['definition'].to_dict().items()}
+
+        # Obtain the common concept-code relationship dataset built by the
+        # UmlsReader object at its initialization.
+
         rows = df.to_dicts()
-
-        # Step 1: Collect all unique HGNC IDs upfront
-        hgnc_ids = list({row["codeid"] for row in rows if row["SAB"] == "HGNC"})
-
-        # Step 2: Fetch definitions for all HGNC IDs (with rate limiting inside get_gene_definition)
-        self.ulog.print_and_logger_info(f'Fetching {len(hgnc_ids)} HGNC gene definitions from NCBI...')
-        hgnc_def_map: dict = {}
-        for hgnc_id in tqdm(hgnc_ids, desc='Fetching HGNC definitions'):
-            hgnc_def_map[hgnc_id] = refseqapi.get_gene_definition(hgnc_id)
-
-        # Step 3: Build the list of rels using the prefetched definitions
         desc = self._get_progress_label("rel_concept_code")
         for row in tqdm(rows, desc=f'Building {desc}'):
             if row["SAB"] == "HGNC":

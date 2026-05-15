@@ -25,6 +25,9 @@ from urllib3.util import Retry
 # Centralized logging
 from .ubkg_logging import UbkgLogging
 
+# Timer
+from .ubkg_timer import UbkgTimer
+
 class ubkgExtract:
 
     def __init__(self, ulog: UbkgLogging):
@@ -39,7 +42,9 @@ class ubkgExtract:
         :return:
         """
 
-        self.ulog.print_and_logger_info(f'Downloading to {download_full_path}')
+        self.ulog.print_and_logger_info(f'Downloading from: {share_url}')
+        self.ulog.print_and_logger_info(f'Downloading to: {download_full_path}')
+
         ghfile = requests.get(share_url)
         with open(download_full_path, 'wb') as output:
             output.write(ghfile.content)
@@ -125,7 +130,7 @@ class ubkgExtract:
         disable_progress = (total == 0)
 
         # Download the file in chunks, updating the progress bar.
-        self.ulog.print_and_logger_info(f'Downloading...')
+        self.ulog.print_and_logger_info(f'Downloading to {download_full_path}')
         with open(download_full_path, 'wb') as file, tqdm(
             desc=download_full_path,
             total=total,
@@ -158,12 +163,24 @@ class ubkgExtract:
         4. The file is UTF-8 encoded.
         """
 
-        # Decompress
+        # Decompress in chunks with tqdm
+        self.ulog.print_and_logger_info(f'Unzipping {zipfilename}')
+        file_size = os.path.getsize(zipfilename)
+        chunk_size = 1024 * 1024  # 1MB chunks
+
+        compressed_bytes = bytearray()
+
         with open(zipfilename, 'rb') as fzip:
-            file_content = gzip.decompress(fzip.read()).decode('utf-8')
+            with tqdm(total=file_size, unit='B', unit_scale=True, desc='Reading gzip') as pbar:
+                while chunk := fzip.read(chunk_size):
+                    compressed_bytes.extend(chunk)
+                    pbar.update(len(chunk))
+
+        utimer = UbkgTimer('Unzipping')
+        file_content = gzip.decompress(compressed_bytes).decode('utf-8')
+        utimer.stop()
 
         if outfilename == '':
-            # Write output to a file with the same name as the Zip, minus the GZ file extension, if applicable.
             extract_filename = zipfilename[zipfilename.rfind('/') + 1:]
             extract_extension = extract_filename[extract_filename.rfind('.'):len(extract_filename)]
             if extract_extension.lower() == '.gz':
@@ -172,9 +189,15 @@ class ubkgExtract:
             extract_filename = outfilename
 
         extract_path = os.path.join(outputpath, extract_filename)
-        self.ulog.print_and_logger_info(f'Writing to {extract_path}')
+        self.ulog.print_and_logger_info(f'Extracting to {extract_path}')
+
+        # Write in chunks with tqdm
+        lines = file_content.splitlines(keepends=True)
         with open(extract_path, 'w') as fout:
-            fout.write(file_content)
+            with tqdm(total=len(lines), unit='lines', desc='Writing') as pbar:
+                for line in lines:
+                    fout.write(line)
+                    pbar.update(1)
 
         return extract_path
 
@@ -186,7 +209,7 @@ class ubkgExtract:
 
         :param zip_url:  full URL to file
         :param zip_path: path of directory to which to download the ZIP file
-        :param extract_path:
+        :param extract_path: path to directory to which to extract the ZIP file
         :param zipfilename: path of directory for file to be extracted from GZIP
         :param outfilename: name of the downloaded file.
         :return: the full path to the extracted file.
@@ -196,8 +219,6 @@ class ubkgExtract:
         """
 
         zip_full_path = os.path.join(zip_path, zipfilename)
-        self.ulog.print_and_logger_info(f'url={zip_url}')
-        self.ulog.print_and_logger_info(f'zip_full_path={zip_full_path}')
 
         # Download GZIP file.
         self.download_file(url=zip_url, download_full_path=zip_full_path, encoding='gzip', chunk_size=1024)
@@ -382,7 +403,7 @@ class ubkgExtract:
             lf = (pl.scan_csv(filename,
                               separator=separator,
                               n_rows=n_rows,
-                              infer_schema_length=0,  # read all columns as Utf8, no truncation
+                              infer_schema_length=10000,  # read all columns as Utf8, no truncation
                               quote_char=None,  # TSVs rarely use quoting; avoids misparse
                               truncate_ragged_lines=True
                               )
