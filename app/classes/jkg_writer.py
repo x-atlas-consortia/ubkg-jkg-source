@@ -87,7 +87,7 @@ class JkgWriter:
         """
         if type(item_to_unload) is list:
             item_to_unload.clear()
-        if type(item_to_unload) is pd.DataFrame:
+        if type(item_to_unload) is pl.DataFrame:
             item_to_unload = None
 
         gc.collect()
@@ -359,7 +359,7 @@ class JkgWriter:
             .join(preferred, on="CUI", how="left")
             .with_columns(
                 pl.col("pref_term").fill_null(""),
-                (pl.lit("UMLS:") + pl.col("CUI")).alias("id"),
+                pl.col("CUI").alias("id"),
                 pl.lit("UMLS").alias("sab"),
             )
             .select("labels", "id", "pref_term", "sab")
@@ -540,6 +540,8 @@ class JkgWriter:
             .str.replace_all("%", "_", literal=True)
             .str.replace_all("'", "_", literal=True)
             .str.replace_all(" ", "_", literal=True)
+            .str.replace_all("<", "_", literal=True)
+            .str.replace_all(">", "_", literal=True)
             .str.to_lowercase()
         )
 
