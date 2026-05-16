@@ -231,6 +231,10 @@ class JkgWriter:
         df = self.ureader.df_concept_concept_rels
         # Select the relationship labels.
         df = df.select('rel_label').unique().sort('rel_label')
+        # Format relationship labels for neo4j compatibility.
+        df = df.with_columns(
+            self._reformat_relationship_labels(pl.col("rel_label")).alias("rel_label")
+        )
 
         # Convert the columnar Polars DataFrame to dicts for row-level processing.
         rows = df.to_dicts()
@@ -450,18 +454,17 @@ class JkgWriter:
 
         return list_rels
 
-    def _reformat_relationship_labels(self, expr: pl.Expr) -> pl.Expr:
+    def _reformat_labels(self, expr: pl.Expr) -> pl.Expr:
         """
-        Converts a relationship label to a neo4j-compatible format.
-        :param expr: Polars expression for the relationship-label column.
-        :return: Polars expression with transformed labels.
+        Converts a string to a neo4j-compatible format.
+        :param expr: Polars expression for a string field.
+        :return: Polars expression with transformed field.
         """
 
         """
         To avoid the need for back-ticking in Cypher queries, replace 
         reserved characters with underscores.
         """
-
         ret = (
             expr.cast(pl.Utf8)
             .str.replace_all(".", "_", literal=True)
@@ -475,6 +478,18 @@ class JkgWriter:
             .str.replace_all(":", "_", literal=True)
             .str.to_lowercase()
         )
+
+        return ret
+
+    def _reformat_relationship_labels(self, expr: pl.Expr) -> pl.Expr:
+        """
+        Converts a relationship label to a neo4j-compatible format.
+        :param expr: Polars expression for the relationship-label column.
+        :return: Polars expression with transformed labels.
+        """
+
+        # First apply the common label cleanup.
+        ret = self._reformat_labels(expr)
 
         # Prepend "rel_" to relationships whose labels start with numbers.
         ret = ((pl.when(ret.str.slice(0, 1).str.contains(r"^\d$"))
