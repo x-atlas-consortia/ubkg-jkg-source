@@ -294,41 +294,67 @@ class JkgWriter:
     def _get_concept_nodes_list(self) -> list:
         """
         Builds the list of Concept nodes of the nodes array of the JKG.JSON.
+
+        The "preferred term" of a concept in MRCONSO is defined as having the
+        following characteristics:
+        1. The Atom Status (TS) is preferred  (ISPREF=Y).
+        2. The String type (STT) is "PF" (Preferred form of term).
+        3. The Term Status is "P" (Preferred LUI of the CUI).
+
+        However, many concepts in MRCONSO do not have preferred term
+        rows, especially from the CHV and MSH SABs. For these concepts,
+        the preferred term will be the blank string.
+
         """
         list_nodes = []
 
-        #Obtain the subset of English-language, non-suppressed records from
+        # Obtain the subset of English-language, non-suppressed records from
         # MRCONSO built by the UmlsReader object.
         df = self.ureader.df_concept_code_rels
 
-        # Identify the preferred term for each concept from
-        #   -- the Atom Status (TS) is preferred  (ISPREF=Y)
-        #   -- the String type (STT) is "PF" (Preferred form of term)
-        #   -- the Term Status is "P" (Preferred LUI of the CUI)
-        df = (df.filter(pl.col('ISPREF') == 'Y')
-              .filter(pl.col('STT') == 'PF')
-              .filter(pl.col('TS') == 'P'))
+        # One row per concept from the full dataset, regardless of whether
+        # the concept has a row that corresponds to a preferred term.
+        concepts = df.select("CUI").unique()
 
-        # Drop duplicates
-        df = df.unique(subset='CUI')
+        # Identify those concepts that have preferred terms per the criteria.
+        preferred = (
+            df.filter(pl.col("ISPREF") == "Y")
+            .filter(pl.col("STT") == "PF")
+            .filter(pl.col("TS") == "P")
+            .select("CUI", pl.col("STR").alias("pref_term"))
+            .unique(subset="CUI")
+        )
 
         # Obtain sorted list of concept labels for each concept.
         dflabels = self._get_concept_labels_list()
 
-        df = (df.join(dflabels,
-                     how='inner',
-                     on='CUI')
-              .unique())
+        """
+        For each concept, 
+        1. Obtain the corresponding concept labels
+        2. Obtain either the preferred term or the blank string.
+        """
+        concept_nodes_df = (
+            concepts
+            .join(dflabels, on="CUI", how="inner")
+            .join(preferred, on="CUI", how="left")
+            .with_columns(
+                pl.col("pref_term").fill_null(""),
+                (pl.lit("UMLS:") + pl.col("CUI")).alias("id"),
+                pl.lit("UMLS").alias("sab"),
+            )
+            .select("labels", "id", "pref_term", "sab")
+            .unique()
+        )
 
-        rows = df.to_dicts()
+        rows = concept_nodes_df.to_dicts()
 
         desc = self._get_progress_label("node_concept")
         for row in tqdm(rows, desc=f'Building {desc}'):
            dict_node = {
                "labels": row["labels"],
                "properties": {
-                   "id": f"UMLS:{row['CUI']}",
-                   "pref_term": row["STR"],
+                   "id": f"UMLS:{row['id']}",
+                   "pref_term": row["pref_term"],
                    "sab": "UMLS"
                }
            }
@@ -454,7 +480,7 @@ class JkgWriter:
 
         return list_rels
 
-    def _reformat_labels(self, expr: pl.Expr) -> pl.Expr:
+    def _reformat_field_for_neo4j(self, expr: pl.Expr) -> pl.Expr:
         """
         Converts a string to a neo4j-compatible format.
         :param expr: Polars expression for a string field.
@@ -476,6 +502,7 @@ class JkgWriter:
             .str.replace_all("{", "_", literal=True)
             .str.replace_all("}", "_", literal=True)
             .str.replace_all(":", "_", literal=True)
+            .str.replace_all(",", "_", literal=True)
             .str.to_lowercase()
         )
 
@@ -483,13 +510,13 @@ class JkgWriter:
 
     def _reformat_relationship_labels(self, expr: pl.Expr) -> pl.Expr:
         """
-        Converts a relationship label to a neo4j-compatible format.
+        Converts a relationship label field to a neo4j-compatible format.
         :param expr: Polars expression for the relationship-label column.
         :return: Polars expression with transformed labels.
         """
 
-        # First apply the common label cleanup.
-        ret = self._reformat_labels(expr)
+        # Reformat the field for general neo4j compatibility.
+        ret = self._reformat_field_for_neo4j(expr)
 
         # Prepend "rel_" to relationships whose labels start with numbers.
         ret = ((pl.when(ret.str.slice(0, 1).str.contains(r"^\d$"))
@@ -553,6 +580,11 @@ class JkgWriter:
         # Obtain the common concept-code relationship dataset built by the
         # UmlsReader object at its initialization.
         df = self.ureader.df_concept_code_rels
+
+        # Format codeid for neo4j compatibility.
+        df = df.with_columns(
+            self._reformat_relationship_labels(pl.col("codeid")).alias("codeid")
+        )
 
         # Build HGNC_ID -> definition lookup dict once before the loop
         #hgnc_def_map: dict = self.gene_summaries.set_index('HGNC_ID')['definition'].to_dict()

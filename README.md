@@ -173,7 +173,8 @@ Because Polars cannot scan files with these characters, it is necessary to remov
 
 **umls2jkg** looks for cleaned versions of these files in the output directory. If a file is not present, the application creates a cleaned version of the file.
 
-## Standardized relationship label format
+### Standardized string formats
+#### Relationships
 The [neo4 naming rules](https://neo4j.com/docs/cypher-manual/current/syntax/naming/) specify that relationship names:
 1. Contain only alphanumeric characters or the underscore.
 2. Start with a alphabetic character.
@@ -188,6 +189,22 @@ for backticks, relationships in the UBKG are reformatted as follows:
 | other non-alphanumeric characters | replaced with underscores | **abc (def)** to **abc_def** |
 | leading numeric character         | preceded with 'REL_'      | **1abc** to **REL_1abc**     |
 
+#### Codes
+Some codes in the UMLS contain characters that will fail schema validation. These codes
+currently are found in the CDT and HL7V2.5 SABs. The script replaces special characters 
+in these codes with the underscore.
+
+### Concepts without preferred terms
+Information on UMLS concepts is found in MRCONSO.RRF. Most UMLS concepts will have a row in
+MRCONSO.RRF that corresponds to a preferred term for the concept, satisfying the following criteria:
+1. The Atom Status (TS) is preferred  (ISPREF=Y). 
+2. The String type (STT) is "PF" (Preferred form of term). 
+3. The Term Status is "P" (Preferred LUI of the CUI).
+
+A number of concepts from the CHV and MSH SABs do not have preferred term rows in MRCONSO.RRF. For 
+example, many concepts have rows where ISPREF=Y but STT=VC, corresponding to a "case variant of a preferred term".
+
+The script assigns blank preferred terms to concepts without rows in MRCONSO.RRF that do not satisfy the preferred term criteria.
 
 ## Historical processing times
 The following times were for the processing of the full 2025AB release, on a MacOs machine with 32GB RAM and no other processes competing for resources.
@@ -213,6 +230,8 @@ Time to scan, clean, and process files: 11 minutes, 14 seconds.
 # Gene descriptions
 As part of processing, **umls2jkg** obtains descriptions of genes by querying [RefSeq](https://www.ncbi.nlm.nih.gov/refseq/).
 The script writes gene descriptions to a file named REFSEQ.csv, in the same directory as the **jkg.json** output.
+If REFSEQ.csv exists in the output directory, the script will use the information in the file instead of querying RefSeq.
+Deleting REFSEQ.csv will force the script to regenerate it.
 
 
 # Output
