@@ -183,11 +183,11 @@ Although a relationship can include special characters or start with a number, C
 to the relationship must escape the relationship name with backticks. To avoid the need
 for backticks, relationships in the UBKG are reformatted as follows:
 
-| Characters                        | Change                    | Example                      |
-|-----------------------------------|---------------------------|------------------------------|
-| hyphen                            | replaced with underscore  | **abc-def** to **abc_def**   |
-| other non-alphanumeric characters | replaced with underscores | **abc (def)** to **abc_def** |
-| leading numeric character         | preceded with 'REL_'      | **1abc** to **REL_1abc**     |
+| Characters                        | Change                    | Example                       |
+|-----------------------------------|---------------------------|-------------------------------|
+| hyphen                            | replaced with underscore  | **abc-def** to **abc_def**    |
+| other non-alphanumeric characters | replaced with underscores | **abc (def)** to **abc_def_** |
+| leading numeric character         | preceded with 'REL_'      | **1abc** to **REL_1abc**      |
 
 #### Codes
 Some codes in the UMLS contain characters that will fail schema validation. These codes

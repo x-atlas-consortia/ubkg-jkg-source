@@ -6,7 +6,8 @@ JSON Knowledge Graph (JKG) schema.
 """
 
 import os
-
+import gc
+from typing import Any
 
 import polars as pl
 from tqdm import tqdm
@@ -78,6 +79,18 @@ class JkgWriter:
         # End
         self.json_writer.end_json()
 
+    def _unload_item(self, item_to_unload: Any):
+        """
+        Explicitly unloads an object from memory.
+        :param item_to_unload: object to be unloaded
+
+        """
+        if type(item_to_unload) is list:
+            item_to_unload.clear()
+        if type(item_to_unload) is pd.DataFrame:
+            item_to_unload = None
+
+        gc.collect()
 
     def _get_progress_label(self, label_key:str) -> str:
         """
@@ -157,6 +170,9 @@ class JkgWriter:
         # Convert to a list of dictionaries for row-wise processing
         rows = df.to_dicts()
 
+        # Unload DataFrame.
+        self._unload_item(item_to_unload=df)
+
         # Build JSON output row by row.
         # Start with hard-coded rows for:
         # - the UMLS itself
@@ -204,6 +220,7 @@ class JkgWriter:
 
         # Convert to a list of dictionaries for row-wise processing
         rows = df.to_dicts()
+        self._unload_item(item_to_unload=df)
 
         # Build JSON output row by row.
         desc = self._get_progress_label("node_semantic_rel")
@@ -238,6 +255,7 @@ class JkgWriter:
 
         # Convert the columnar Polars DataFrame to dicts for row-level processing.
         rows = df.to_dicts()
+        self._unload_item(item_to_unload=df)
 
         # Manually add the Rel_Label for CODE, between concepts and codes.
         dict_node = {
@@ -325,6 +343,8 @@ class JkgWriter:
             .unique(subset="CUI")
         )
 
+        self._unload_item(item_to_unload=df)
+
         # Obtain sorted list of concept labels for each concept.
         dflabels = self._get_concept_labels_list()
 
@@ -346,7 +366,13 @@ class JkgWriter:
             .unique()
         )
 
+        # Unload DataFrames.
+        self._unload_item(item_to_unload=preferred)
+        self._unload_item(item_to_unload=dflabels)
+
         rows = concept_nodes_df.to_dicts()
+        # Unload DataFrame.
+        self._unload_item(item_to_unload=concept_nodes_df)
 
         desc = self._get_progress_label("node_concept")
         for row in tqdm(rows, desc=f'Building {desc}'):
@@ -373,6 +399,8 @@ class JkgWriter:
         df = self.ureader.df_concept_code_rels.select('STR').unique().sort('STR')
 
         rows = df.to_dicts()
+        # Unload DataFrame.
+        self._unload_item(item_to_unload=df)
 
         desc = self._get_progress_label("node_term")
         for row in tqdm(rows, desc=f'Building {desc}'):
@@ -457,6 +485,9 @@ class JkgWriter:
                      maintain_order='left').sort(['UI','UI3'])
 
         rows = df.to_dicts()
+        # Unload DataFrames.
+        self._unload_item(item_to_unload=df)
+        self._unload_item(item_to_unload=df_srs)
 
         desc = self._get_progress_label("rel_semantic")
         for row in tqdm(rows, desc=f'Building {desc}'):
@@ -480,10 +511,13 @@ class JkgWriter:
 
         return list_rels
 
-    def _reformat_field_for_neo4j(self, expr: pl.Expr) -> pl.Expr:
+    def _reformat_field_for_neo4j(self, expr: pl.Expr, replace_colon: bool=False) -> pl.Expr:
         """
         Converts a string to a neo4j-compatible format.
+        Used for relationship labels and codeids.
+
         :param expr: Polars expression for a string field.
+        :param replace_colon: Whether to replace colons with underscores.
         :return: Polars expression with transformed field.
         """
 
@@ -501,10 +535,16 @@ class JkgWriter:
             .str.replace_all("]", "_", literal=True)
             .str.replace_all("{", "_", literal=True)
             .str.replace_all("}", "_", literal=True)
-            .str.replace_all(":", "_", literal=True)
             .str.replace_all(",", "_", literal=True)
+            .str.replace_all("?", "_", literal=True)
+            .str.replace_all("%", "_", literal=True)
+            .str.replace_all("'", "_", literal=True)
+            .str.replace_all(" ", "_", literal=True)
             .str.to_lowercase()
         )
+
+        if replace_colon:
+            ret = ret.str.replace_all(":", "_", literal=True)
 
         return ret
 
@@ -542,6 +582,8 @@ class JkgWriter:
         )
 
         rows = df.to_dicts()
+        # Unload DataFrame.
+        self._unload_item(item_to_unload=df)
 
         desc = self._get_progress_label("rel_concept_concept")
         for row in tqdm(rows, desc=f'Building {desc}'):
@@ -583,8 +625,9 @@ class JkgWriter:
 
         # Format codeid for neo4j compatibility.
         df = df.with_columns(
-            self._reformat_relationship_labels(pl.col("codeid")).alias("codeid")
-        )
+            self._reformat_field_for_neo4j(expr=pl.col("codeid")).alias("codeid"),
+            replace_colon=True)
+
 
         # Build HGNC_ID -> definition lookup dict once before the loop
         #hgnc_def_map: dict = self.gene_summaries.set_index('HGNC_ID')['definition'].to_dict()
@@ -595,6 +638,10 @@ class JkgWriter:
         # UmlsReader object at its initialization.
 
         rows = df.to_dicts()
+
+        # Unload DataFrame.
+        self._unload_item(item_to_unload=df)
+
         desc = self._get_progress_label("rel_concept_code")
         for row in tqdm(rows, desc=f'Building {desc}'):
             if row["SAB"] == "HGNC":
@@ -677,6 +724,10 @@ class JkgWriter:
         utimer.stop()
 
         rows = df.to_dicts()
+
+        # Unload DataFrame.
+        self._unload_item(item_to_unload=df)
+
         desc = self._get_progress_label("rel_ndc")
         for row in tqdm(rows, desc=f'Building {desc}'):
             dict_rel = {
