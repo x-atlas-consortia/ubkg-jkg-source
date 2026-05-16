@@ -82,10 +82,15 @@ A full release Zip is very large. For example, the 2025AB release file expands t
 The **umls2jkg** application was developed on a MacOs machine running Tahoe 26.2.
 
 ### Memory
-It is recommende that the host machine have at least 32 GB of RAM.
+It is recommended that the host machine have at least 32 GB of RAM.
+Even with this amount of RAM, it is likely that the machine will need disk space for swapping.
+It is necessary to load large files into memory.
 
 ### Disk space
-The host machine should have at least enough disk space to accomodate data files and the output.
+The host machine should have at least enough disk space to accomodate:
+* data files
+* output files
+* memory swap space
 
 Disk space requirements:
 
