@@ -366,6 +366,7 @@ class JkgWriter:
             .unique()
         )
 
+
         # Unload DataFrames.
         self._unload_item(item_to_unload=preferred)
         self._unload_item(item_to_unload=dflabels)
@@ -576,16 +577,38 @@ class JkgWriter:
 
         # Obtain the common concept-concept relationship dataset built by the
         # UmlsReader object at its initialization.
-        df = self.ureader.df_concept_concept_rels
+        df_rels = self.ureader.df_concept_concept_rels
+
+        """
+        Filter out concept-concept relationships involving concepts that are not 
+        in df_concept_code_rels--i.e., concepts that are obsolete or suppressed.
+        """
+        # Concept-code relationships used to determine which CUIs are present.
+        df_code_rels = self.ureader.df_concept_code_rels
+
+        valid_cuis = df_code_rels.select("CUI").unique()
+
+        df_rels = df_rels.join(
+            valid_cuis.rename({"CUI": "CUI1"}),
+            on="CUI1",
+            how="inner",
+        ).join(
+            valid_cuis.rename({"CUI": "CUI2"}),
+            on="CUI2",
+            how="inner",
+        )
 
         # Format relationship labels for neo4j compatibility.
-        df = df.with_columns(
+        df_rels = df_rels.with_columns(
             self._reformat_relationship_labels(pl.col("rel_label")).alias("rel_label")
         )
 
-        rows = df.to_dicts()
+        rows = df_rels.to_dicts()
+
         # Unload DataFrame.
-        self._unload_item(item_to_unload=df)
+        self._unload_item(item_to_unload=df_rels)
+        self._unload_item(item_to_unload=df_code_rels)
+        self._unload_item(item_to_unload=valid_cuis)
 
         desc = self._get_progress_label("rel_concept_concept")
         for row in tqdm(rows, desc=f'Building {desc}'):
@@ -594,7 +617,7 @@ class JkgWriter:
             # CUI2 identifies the start concept and CUI1 identifies
             # the end concept of the relationship.
             dict_rel = {
-                "label": f"{row["rel_label"]}",
+                "label": f"{row['rel_label']}",
                 "end": {
                     "properties" : {
                         "id": f"UMLS:{row['CUI1']}"
