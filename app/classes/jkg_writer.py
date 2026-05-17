@@ -547,6 +547,7 @@ class JkgWriter:
 
         :param expr: Polars expression for a string field.
         :param replace_colon: Whether to replace colons with underscores.
+        :param cast_to_lowercase: Whether to convert strings to lowercase.
         :return: Polars expression with transformed field.
         """
 
@@ -571,7 +572,6 @@ class JkgWriter:
             .str.replace_all(" ", "_", literal=True)
             .str.replace_all("<", "_", literal=True)
             .str.replace_all(">", "_", literal=True)
-            .str.to_lowercase()
         )
 
         if replace_colon:
@@ -589,6 +589,9 @@ class JkgWriter:
         # Reformat the field for general neo4j compatibility.
         ret = self._reformat_field_for_neo4j(expr)
 
+        # Cast relationship labels to lowercase.
+        ret.str.to_lowercase()
+
         # Prepend "rel_" to relationships whose labels start with numbers.
         ret = ((pl.when(ret.str.slice(0, 1).str.contains(r"^\d$"))
                .then(pl.lit("rel_") + ret))
@@ -596,6 +599,22 @@ class JkgWriter:
 
         return ret
 
+    def _reformat_codeids(self, expr: pl.Expr) -> pl.Expr:
+        """
+        Converts a codeid field to a neo4j-compatible format.
+        :param expr: Polars expression for the codeid column.
+        :return: Polars expression with transformed codeids.
+        """
+        # Reformat the field for general neo4j compatibility.
+        ret = self._reformat_field_for_neo4j(expr, replace_colon=False)
+
+        # Cast the SAB portion of the codeid to uppercase.
+        parts = ret.str.split_exact(":", 1)
+        return pl.when(ret.str.contains(":")).then(
+            parts.struct.field("field_0").str.to_uppercase()
+            + pl.lit(":")
+            + parts.struct.field("field_1")
+        ).otherwise(ret)
 
     def _get_concept_concept_rel_list(self) -> list:
         """
@@ -671,6 +690,7 @@ class JkgWriter:
 
         return list_rels
 
+
     def _get_concept_code_rel_list(self) -> list:
         """
         Builds the list of concept-code rels array of the JKG.JSON.
@@ -682,11 +702,9 @@ class JkgWriter:
         # UmlsReader object at its initialization.
         df = self.ureader.df_concept_code_rels
 
-        # Format codeid for neo4j compatibility.
+        # Format codeid for neo4j compatibility and case for SAB.
         df = df.with_columns(
-            self._reformat_field_for_neo4j(expr=pl.col("codeid")).alias("codeid"),
-            replace_colon=True)
-
+            self._reformat_codeids(expr=pl.col("codeid")).alias("codeid"))
 
         # Build HGNC_ID -> definition lookup dict once before the loop
         #hgnc_def_map: dict = self.gene_summaries.set_index('HGNC_ID')['definition'].to_dict()
