@@ -83,8 +83,7 @@ The **umls2jkg** application was developed on a MacOs machine running Tahoe 26.2
 
 ### Memory
 It is recommended that the host machine have at least 32 GB of RAM.
-Even with this amount of RAM, it is likely that the machine will need disk space for swapping.
-It is necessary to load large files into memory.
+Even with this amount of RAM, it is likely that the machine will need disk space for swapping, because of the need to load large files into memory.
 
 ### Disk space
 The host machine should have at least enough disk space to accomodate:
@@ -92,7 +91,7 @@ The host machine should have at least enough disk space to accomodate:
 * output files
 * memory swap space
 
-Disk space requirements:
+Disk space requirements include:
 
 | Type of file          | Disk space (GB) |
 |-----------------------|-----------------|
@@ -116,10 +115,8 @@ configuration file, including:
 | debug       | debug_n_rows    | The number of rows to read from data files. A value of 0 will result in all rows being read                              |
 
 ## Pretty printing
-It is possible to "pretty print" the output file--i.e., generate output with spacing and indentation. 
-Although pretty-printing increases the legibility of the file, it also dramatically increases the size of the output file, due to the large number of
-entries.
-
+It is possible to "pretty print" the JKG JSON output file--i.e., generate output with spacing and indentation. 
+Although pretty-printing increases the legibility of the output file, it also dramatically increases its size.
 ## Software
 ### Python
 The **umls2jkg** application was developed in Python 3.13.
@@ -127,7 +124,7 @@ The **umls2jkg** application was developed in Python 3.13.
 ### Packages
 **umls2jkg** uses the following packages:
 - [Polars](https://pola.rs/) to analyze the extremely large UMLS data files
-- [Pandas](https://pandas.pydata.org/) for analysis of tabular data
+- [Pandas](https://pandas.pydata.org/) to obtain gene information from RefSeq
 - [tqdm](https://tqdm.github.io/) for progress indicators
 
 # Application workflow
@@ -173,7 +170,7 @@ To give an idea of how long a file might take to process, **umls2jkg** applicati
 ideal conditions. 
 
 ## Cleaning
-Three Metathesaurus files (MRCONSO.RRF; MRDEF.RRF; and MRSAT.RRF) contain rows with text includes quote characters. 
+Three Metathesaurus files (MRCONSO.RRF; MRDEF.RRF; and MRSAT.RRF) contain rows with text that includes quote characters. 
 Because Polars cannot scan files with these characters, it is necessary to remove quote characters from the files.
 
 **umls2jkg** looks for cleaned versions of these files in the output directory. If a file is not present, the application creates a cleaned version of the file.

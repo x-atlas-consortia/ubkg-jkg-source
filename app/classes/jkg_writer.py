@@ -175,17 +175,41 @@ class JkgWriter:
 
         # Build JSON output row by row.
         # Start with hard-coded rows for:
+        # - JKG
         # - the UMLS itself
         # - NDC
         umls_release = self.ureader.get_umls_version()
-        listsources = [{"labels": ["Source"],
-                        "properties": {"id": "UMLS:UMLS", "name": "Unified Medical Language System",
-                                       "description": "United States National Institutes of Health (NIH) National Library of Medicine (NLM) Unified Medical Language System (UMLS) Knowledge Sources.",
-                                       "sab": "UMLS",
-                                       "source": "http://www.nlm.nih.gov/research/umls/licensedcontent/umlsknowledgesources.html"},
-                                       "source_version": umls_release},
-                       {"labels": ["Source"],
-                        "properties": {"id": "UMLS:NDC", "name": "National Drug Codes", "sab": "NDC"}}]
+        listsources = [
+            {
+                "labels": ["Source"],
+                "properties": {
+                    "id": "JKG",
+                    "name": "JSON Knowledge Graph",
+                    "description": "JSON specification for working with general knowledge graphs--specifically, property graphs.",
+                    "sab": "JKG",
+                    "source":"https://github.com/x-atlas-consortia/json-knowledge-graph"
+                }
+            },
+            {
+                "labels": ["Source"],
+                "properties": {
+                    "id": "UMLS:UMLS",
+                    "name": "Unified Medical Language System",
+                    "description": "United States National Institutes of Health (NIH) National Library of Medicine (NLM) Unified Medical Language System (UMLS) Knowledge Sources.",
+                    "sab": "UMLS",
+                    "source": "http://www.nlm.nih.gov/research/umls/licensedcontent/umlsknowledgesources.html"
+                    },
+                "source_version": umls_release
+            },
+            {
+                "labels": ["Source"],
+                "properties": {
+                    "id": "UMLS:NDC",
+                    "name": "National Drug Codes",
+                    "sab": "NDC"
+                }
+            }
+        ]
 
         desc = self._get_progress_label("node_source")
         for row in tqdm(rows, desc=f'Building {desc}'):
@@ -257,14 +281,14 @@ class JkgWriter:
         rows = df.to_dicts()
         self._unload_item(item_to_unload=df)
 
-        # Manually add the Rel_Label for CODE, between concepts and codes.
+        # Manually add the Rel_Label for CODE--i.e., coderels
         dict_node = {
             "labels": ["Rel_Label"],
             "properties": {
-                "id": "UBKG:code",
-                "def": "relationship between a UBKG Concept and a Code in a SAB",
-                "rel_label": "code",
-                "sab": "UBKG"
+                "id": "CODE",
+                "def": "contains information on a code in JKG--i.e., a representation of a Concept in a SAB",
+                "rel_label": "CODE",
+                "sab": "JKG"
             }
         }
         list_nodes.append(dict_node)
@@ -710,6 +734,7 @@ class JkgWriter:
 
         """
 
+        self.ulog.print_and_logger_info('Building NDC concept-code relationships')
         listrels = []
 
         # Obtain non-suppressed attribute values from MRSAT.
@@ -730,7 +755,6 @@ class JkgWriter:
 
         df = df.with_columns((pl.col('SAB')+':'+pl.col('CODE')).alias('codeid'))
         df = df.with_columns((pl.lit('NDC:') + pl.col('ATV')).alias('ndcid'))
-
 
         # Join against the DataFrame of concept-code relationships to
         # get information on NDC concepts.
