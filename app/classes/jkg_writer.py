@@ -510,9 +510,13 @@ class JkgWriter:
                      maintain_order='left').sort(['UI','UI3'])
 
         rows = df.to_dicts()
+
         # Unload DataFrames.
         self._unload_item(item_to_unload=df)
         self._unload_item(item_to_unload=df_srs)
+
+        # At this point, the stored DataFrame of semantic definitions is no longer needed.
+        self._unload_item(item_to_unload=self.ureader.df_semantic_definitions)
 
         desc = self._get_progress_label("rel_semantic")
         for row in tqdm(rows, desc=f'Building {desc}'):
@@ -612,6 +616,8 @@ class JkgWriter:
 
         valid_cuis = df_code_rels.select("CUI").unique()
 
+        # Join twice against the frame of unique CUIs--once for starting concepts,
+        # and once for ending concepts.
         df_rels = df_rels.join(
             valid_cuis.rename({"CUI": "CUI1"}),
             on="CUI1",
@@ -633,6 +639,10 @@ class JkgWriter:
         self._unload_item(item_to_unload=df_rels)
         self._unload_item(item_to_unload=df_code_rels)
         self._unload_item(item_to_unload=valid_cuis)
+
+        # At this point, the stored DataFrame of concept-concept rels
+        # is no longer needed.
+        self._unload_item(item_to_unload=self.ureader.df_concept_code_rels)
 
         desc = self._get_progress_label("rel_concept_concept")
         for row in tqdm(rows, desc=f'Building {desc}'):
@@ -776,6 +786,10 @@ class JkgWriter:
 
         # Unload DataFrame.
         self._unload_item(item_to_unload=df)
+
+        # At this point, the stored DataFrame of concept-code relationships
+        # is no longer needed.
+        self._unload_item(item_to_unload=self.ureader.df_concept_code_rels)
 
         desc = self._get_progress_label("rel_ndc")
         for row in tqdm(rows, desc=f'Building {desc}'):
