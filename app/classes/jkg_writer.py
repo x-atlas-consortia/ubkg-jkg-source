@@ -183,7 +183,7 @@ class JkgWriter:
             {
                 "labels": ["Source"],
                 "properties": {
-                    "id": "JKG",
+                    "id": "JKG:JKG",
                     "name": "JSON Knowledge Graph",
                     "description": "JSON specification for working with general knowledge graphs--specifically, property graphs.",
                     "sab": "JKG",
@@ -285,7 +285,7 @@ class JkgWriter:
         dict_node = {
             "labels": ["Rel_Label"],
             "properties": {
-                "id": "CODE",
+                "id": "JKG:CODE",
                 "def": "contains information on a code in JKG--i.e., a representation of a Concept in a SAB",
                 "rel_label": "CODE",
                 "sab": "JKG"
