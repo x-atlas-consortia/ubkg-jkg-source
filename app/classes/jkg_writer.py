@@ -29,6 +29,7 @@ from classes.ubkg_extract import ubkgExtract
 class JkgWriter:
 
     def __init__(self, cfg:UbkgConfigParser, ulog:UbkgLogging):
+
         self.cfg = cfg
         self.ulog = ulog
         self.uext = ubkgExtract(ulog=ulog)
@@ -54,14 +55,18 @@ class JkgWriter:
         indent = self.cfg.get_value(section='json_out', key='indent')
         self.json_writer = JsonWriter(outpath=outpath, pretty=pretty, indent=indent)
 
+        """
+        UMLS reader object
+        During its instantiation, the UmlsReader object will read
+        UMLS source files to build common DataFrames used
+        to construct both nodes and rels lists. 
+        JkgWriter will use the UmlsReader to read other UMLS files
+        when they are needed.
+        """
 
-        # UMLS reader object
-        # During its instantiation, the UmlsReader object will read
-        # UMLS source files to build common DataFrames used
-        # to construct both nodes and rels lists. JkgWriter will use
-        # the UmlsReader to read other UMLS files
-        # when they are needed.
         self.ureader = UmlsReader(cfg=cfg, ulog=ulog)
+
+        self._reformat_concept_code_rels_for_neo4j()
 
         # Start
         self.json_writer.start_json()
@@ -78,6 +83,99 @@ class JkgWriter:
 
         # End
         self.json_writer.end_json()
+
+    def _reformat_concept_code_rels_for_neo4j(self):
+        """
+        Reformats fields in the DataFrames of concept-code relationships
+        and concept-concept relationships to JKG-compatible formats.
+
+        Allowed patterns taken from the JKG Schema.
+        Disallowed patterns derived from allowed patterns.
+        """
+
+        # nodes array -> properties -> rel_label
+        self._REL_LABEL_PATTERN = r"^([a-z][a-z0-9_]*|CODE)$"
+        self._REL_LABEL_DISALLOWED_CHARS = r"[^A-Za-z0-9_]"
+
+        # rels array -> properties -> codeid
+        self._CODE_ID_PATTERN = r"^[A-Za-z0-9._-]+:[A-Za-z0-9._-]+$"
+        self._CODE_ID_DISALLOWED_CHARS = r"[^A-Za-z0-9._:-]"
+
+        # Format relationship labels for neo4j compatibility.
+        self.ureader.df_concept_concept_rels = self.ureader.df_concept_concept_rels.with_columns(
+            self._reformat_field_for_neo4j(expr=pl.col("rel_label"), pattern=self._REL_LABEL_PATTERN).alias(
+                "rel_label"))
+
+        # Format codeid for neo4j compatibility and case for SAB.
+        self.ureader.df_concept_code_rels = self.ureader.df_concept_code_rels.with_columns(
+            self._reformat_field_for_neo4j(expr=pl.col("codeid"), pattern=self._CODE_ID_PATTERN).alias("codeid"))
+
+    def _reformat_field_for_neo4j(self, expr: pl.Expr, pattern: str) -> pl.Expr:
+        """
+        Converts a string to a neo4j-compatible format.
+        Used for relationship labels and codeids.
+
+        :param expr: Polars expression for a string field.
+        :param pattern: Neo4j-compatible pattern string.
+        :return: Polars expression with transformed field.
+
+        Converts a string to a neo4j-compatible format for a supported schema pattern.
+
+        Behavior based on pattern:
+
+        if self._REL_LABEL_PATTERN:
+          - replace disallowed chars (self._REL_LABEL_DISALLOWED_CHARS)
+            with "_"
+          - preserve exact "CODE"
+          - lowercase all other values
+          - prepend "rel_" if result starts with a digit
+
+        if self._CODE_ID_PATTERN:
+          - replace disallowed chars (self._CODE_ID_DISALLOWED_CHARS)
+            with "_"
+          - ensure exactly one colon
+          - uppercase the SAB portion before the colon
+        """
+        expr = expr.cast(pl.Utf8)
+
+        if pattern == self._REL_LABEL_PATTERN:
+            ret = expr.str.replace_all(self._REL_LABEL_DISALLOWED_CHARS, "_")
+
+            ret = (
+                pl.when(ret == "CODE")
+                .then(pl.lit("CODE"))
+                .otherwise(ret.str.to_lowercase())
+            )
+
+            ret = (
+                pl.when(ret.str.slice(0, 1).str.contains(r"\d"))
+                .then(pl.lit("rel_") + ret)
+                .otherwise(ret)
+            )
+
+            return ret
+
+        if pattern == self._CODE_ID_PATTERN:
+            # Replace invalid characters, but keep ":" for now.
+            ret = expr.str.replace_all(self._CODE_ID_DISALLOWED_CHARS, "_")
+
+            # Split on colon.
+            parts = ret.str.split(":")
+
+            # First token becomes SAB.
+            sab = parts.list.get(0).fill_null("").str.to_uppercase()
+
+            # Remaining tokens become CODE, rejoined with underscores
+            # so the final result has exactly one colon.
+            code = (
+                parts.list.slice(1)
+                .list.join("_")
+                .fill_null("")
+            )
+
+            return sab + pl.lit(":") + code
+
+        raise ValueError(f"Unsupported pattern: {pattern}")
 
     def _unload_item(self, item_to_unload: Any):
         """
@@ -272,10 +370,7 @@ class JkgWriter:
         df = self.ureader.df_concept_concept_rels
         # Select the relationship labels.
         df = df.select('rel_label').unique().sort('rel_label')
-        # Format relationship labels for neo4j compatibility.
-        df = df.with_columns(
-            self._reformat_relationship_labels(pl.col("rel_label")).alias("rel_label")
-        )
+
 
         # Convert the columnar Polars DataFrame to dicts for row-level processing.
         rows = df.to_dicts()
@@ -540,82 +635,6 @@ class JkgWriter:
 
         return list_rels
 
-    def _reformat_field_for_neo4j(self, expr: pl.Expr, replace_colon: bool=False) -> pl.Expr:
-        """
-        Converts a string to a neo4j-compatible format.
-        Used for relationship labels and codeids.
-
-        :param expr: Polars expression for a string field.
-        :param replace_colon: Whether to replace colons with underscores.
-        :param cast_to_lowercase: Whether to convert strings to lowercase.
-        :return: Polars expression with transformed field.
-        """
-
-        """
-        To avoid the need for back-ticking in Cypher queries, replace 
-        reserved characters with underscores.
-        """
-        ret = (
-            expr.cast(pl.Utf8)
-            .str.replace_all(".", "_", literal=True)
-            .str.replace_all("-", "_", literal=True)
-            .str.replace_all("(", "_", literal=True)
-            .str.replace_all(")", "_", literal=True)
-            .str.replace_all("[", "_", literal=True)
-            .str.replace_all("]", "_", literal=True)
-            .str.replace_all("{", "_", literal=True)
-            .str.replace_all("}", "_", literal=True)
-            .str.replace_all(",", "_", literal=True)
-            .str.replace_all("?", "_", literal=True)
-            .str.replace_all("%", "_", literal=True)
-            .str.replace_all("'", "_", literal=True)
-            .str.replace_all(" ", "_", literal=True)
-            .str.replace_all("<", "_", literal=True)
-            .str.replace_all(">", "_", literal=True)
-        )
-
-        if replace_colon:
-            ret = ret.str.replace_all(":", "_", literal=True)
-
-        return ret
-
-    def _reformat_relationship_labels(self, expr: pl.Expr) -> pl.Expr:
-        """
-        Converts a relationship label field to a neo4j-compatible format.
-        :param expr: Polars expression for the relationship-label column.
-        :return: Polars expression with transformed labels.
-        """
-
-        # Reformat the field for general neo4j compatibility.
-        ret = self._reformat_field_for_neo4j(expr)
-
-        # Cast relationship labels to lowercase.
-        ret.str.to_lowercase()
-
-        # Prepend "rel_" to relationships whose labels start with numbers.
-        ret = ((pl.when(ret.str.slice(0, 1).str.contains(r"^\d$"))
-               .then(pl.lit("rel_") + ret))
-               .otherwise(ret))
-
-        return ret
-
-    def _reformat_codeids(self, expr: pl.Expr) -> pl.Expr:
-        """
-        Converts a codeid field to a neo4j-compatible format.
-        :param expr: Polars expression for the codeid column.
-        :return: Polars expression with transformed codeids.
-        """
-        # Reformat the field for general neo4j compatibility.
-        ret = self._reformat_field_for_neo4j(expr, replace_colon=False)
-
-        # Cast the SAB portion of the codeid to uppercase.
-        parts = ret.str.split_exact(":", 1)
-        return pl.when(ret.str.contains(":")).then(
-            parts.struct.field("field_0").str.to_uppercase()
-            + pl.lit(":")
-            + parts.struct.field("field_1")
-        ).otherwise(ret)
-
     def _get_concept_concept_rel_list(self) -> list:
         """
         Builds the list of concept-concept rels array of the JKG.JSON.
@@ -645,11 +664,6 @@ class JkgWriter:
             valid_cuis.rename({"CUI": "CUI2"}),
             on="CUI2",
             how="inner",
-        )
-
-        # Format relationship labels for neo4j compatibility.
-        df_rels = df_rels.with_columns(
-            self._reformat_relationship_labels(pl.col("rel_label")).alias("rel_label")
         )
 
         rows = df_rels.to_dicts()
@@ -700,11 +714,6 @@ class JkgWriter:
 
         # Obtain the common concept-code relationship dataset built by the
         # UmlsReader object at its initialization.
-        df = self.ureader.df_concept_code_rels
-
-        # Format codeid for neo4j compatibility and case for SAB.
-        df = df.with_columns(
-            self._reformat_codeids(expr=pl.col("codeid")).alias("codeid"))
 
         # Build HGNC_ID -> definition lookup dict once before the loop
         #hgnc_def_map: dict = self.gene_summaries.set_index('HGNC_ID')['definition'].to_dict()
@@ -714,10 +723,7 @@ class JkgWriter:
         # Obtain the common concept-code relationship dataset built by the
         # UmlsReader object at its initialization.
 
-        rows = df.to_dicts()
-
-        # Unload DataFrame.
-        self._unload_item(item_to_unload=df)
+        rows = self.ureader.df_concept_code_rels.to_dicts()
 
         desc = self._get_progress_label("rel_concept_code")
         for row in tqdm(rows, desc=f'Building {desc}'):
