@@ -508,6 +508,19 @@ class JkgWriter:
 
         return list_nodes
 
+    def _is_special_case_nan(self,cui:str) -> bool:
+        """
+        Identifies cases in which the term "NaN" corresponds to
+        something other than np.NaN--e.g., the SCN11A/NaN protein.
+
+        :param cui: CUI to check
+        """
+        return cui in [
+            "C1419854", # SCN11A/NaN
+            "C5958837" # SCN11A wt allele
+
+        ]
+
     def _get_term_nodes_list(self) -> list:
         """
         Builds the list of Term nodes of the nodes array of the JKG.JSON.
@@ -516,7 +529,7 @@ class JkgWriter:
 
         # Obtain the subset of English-language, non-suppressed records of
         # concept-code relationships built by the UmlsReader object.
-        df = self.ureader.df_concept_code_rels.select('STR').unique().sort('STR')
+        df = self.ureader.df_concept_code_rels.select(['CUI','STR']).unique().sort('STR')
 
         rows = df.to_dicts()
         # Unload DataFrame.
@@ -524,14 +537,22 @@ class JkgWriter:
 
         desc = self._get_progress_label("node_term")
         for row in tqdm(rows, desc=f'Building {desc}'):
+            # Filter out truly null terms, which are apparently possible in MRCONSO.
+            term = row["STR"]
+            if term is not None:
+                if term == "NaN":
+                    if self._is_special_case_nan(cui=row['CUI']):
+                        term = "NaN (term)"
+                    else:
+                        continue
 
-            dict_node = {
-                "labels": ["Term"],
-                "properties": {
-                    "id": row["STR"]
-                    }
-            }
-            list_nodes.append(dict_node)
+                dict_node = {
+                    "labels": ["Term"],
+                    "properties": {
+                        "id": term
+                        }
+                }
+                list_nodes.append(dict_node)
 
         return list_nodes
 
@@ -727,30 +748,46 @@ class JkgWriter:
 
         desc = self._get_progress_label("rel_concept_code")
         for row in tqdm(rows, desc=f'Building {desc}'):
+
+            dict_rel = {
+                "label": "isa",
+                "end": {}
+            }
             if row["SAB"] == "HGNC":
                 row["DEF"] = hgnc_def_map.get(row["codeid"], "")
 
-            dict_rel = {
-                "label": "CODE",
-                "end": {
+            endid = row["STR"]
+            # Filter out truly null concept-code maps, accounting
+            # for special cases such as SCNA11A.
+            if endid is not None:
+
+                if endid == "NaN":
+                    if self._is_special_case_nan(cui=row["CUI"]):
+                        endid = "NaN (term)"
+                    else:
+                        continue
+
+                dict_rel = {
+                    "label": "CODE",
+                    "end": {
+                        "properties": {
+                            "id": endid
+                        }
+                    },
                     "properties": {
-                        "id": row["STR"]
-                    }
-                },
-                "properties": {
-                    "sab": row["SAB"],
-                    "def": row["DEF"],
-                    "tty": row["TTY"],
-                    "codeid": row["codeid"]
-                },
-                "start": {
-                    "properties": {
-                        "id": f"UMLS:{row['CUI']}"
+                        "sab": row["SAB"],
+                        "def": row["DEF"],
+                        "tty": row["TTY"],
+                        "codeid": row["codeid"]
+                    },
+                    "start": {
+                        "properties": {
+                            "id": f"UMLS:{row['CUI']}"
+                        }
                     }
                 }
-            }
 
-            list_rels.append(dict_rel)
+                list_rels.append(dict_rel)
 
         return list_rels
 
@@ -817,6 +854,10 @@ class JkgWriter:
 
         desc = self._get_progress_label("rel_ndc")
         for row in tqdm(rows, desc=f'Building {desc}'):
+            # Filter out null terms from input.
+            if row['STR'] is None or row['STR']=='NaN':
+                continue
+
             dict_rel = {
                 "label": "CODE",
                 "end": {

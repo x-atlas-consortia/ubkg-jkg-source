@@ -430,6 +430,8 @@ class UmlsReader:
         df = df.with_columns(
             standardize_term(term_col='STR')
         )
+
+
         utimer.stop()
 
         return df
