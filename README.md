@@ -208,6 +208,13 @@ example, many concepts have rows where ISPREF=Y but STT=VC, corresponding to a "
 
 The script assigns blank preferred terms to concepts without rows in MRCONSO.RRF that do not satisfy the preferred term criteria.
 
+## Special cases
+### NaN 
+The SCN11A gene and its associated gene product (NaN) have terms or synonyms with the string value of "NaN" in the UMLS source data (CUIs C1419854 and C5958837).
+The string "NaN" is a reserved word in Python, corresponding to np.NaN (not a Number). To avoid problems in Python scripts, the 
+term "NaN" is changed to "Nan (term)".
+
+
 ## Historical processing times
 The following times were for the processing of the full 2025AB release, on a MacOs machine with 32GB RAM and no other processes competing for resources.
 
