@@ -327,6 +327,10 @@ class UmlsReader:
         # SAB - source of relationship
 
         df_mrrel = self.get_umls_file(filename='MRREL', cols=colrels)
+
+        # Filter out self-referential relationships.
+        df_mrrel = df_mrrel.filter(pl.col("CUI1") != pl.col("CUI2"))
+
         # Get the relationship label--the value of RELA if not null else
         # the value of REL.
         df_mrrel = df_mrrel.with_columns(
