@@ -329,6 +329,11 @@ class UmlsReader:
         df_mrrel = self.get_umls_file(filename='MRREL', cols=colrels)
 
         # Filter out self-referential relationships.
+        self.ulog.print_and_logger_info(f'Filtering out self-referential relationships...')
+        df_self_edge = df_mrrel.filter(pl.col("CUI1") == pl.col("CUI2"))
+        self_edge_file = os.path.join(self.cfg.get_value(section='directories', key='output_dir'), 'self_relations.csv')
+        df_self_edge.write_csv(self_edge_file)
+
         df_mrrel = df_mrrel.filter(pl.col("CUI1") != pl.col("CUI2"))
 
         # Get the relationship label--the value of RELA if not null else
